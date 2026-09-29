@@ -130,7 +130,7 @@ def main(argv=None) -> int:
     cp = cp_client()
     keys = json.loads((ROOT / ".local" / "agent-keys.json").read_text())["agents"]
     coding_hash = hashlib.sha256(keys["coding-agent"]["key"].encode()).hexdigest()
-    rates_backup = RATES.read_text(encoding="utf-8")
+    rates_backup = RATES.read_bytes()
     t_start = datetime.now(timezone.utc) - timedelta(seconds=2)
     t0 = time.time()
     timeline: dict = {"started": t0}
@@ -208,7 +208,7 @@ def main(argv=None) -> int:
             n = len(pilot_rows(t_start))
             log(f"requests so far: {n}")
     finally:
-        RATES.write_text(rates_backup, encoding="utf-8")
+        RATES.write_bytes(rates_backup)
         log("rates.json restored")
     t_end = time.time()
     probe.join(timeout=900)
