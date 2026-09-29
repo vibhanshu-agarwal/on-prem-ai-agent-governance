@@ -75,6 +75,14 @@ class EmergencyStop:
         keys = {k.key_hash: k for k in self.g.find_keys(agent_id=agent_id)}
         wl = {w.id: w for w in self.o.list_workloads(labels={AGENT_LABEL: agent_id})}
         wl.update({w.id: w for w in self.o.list_workloads(labels={ROOT_AGENT_LABEL: agent_id})})
+        # agents registered with a custom workload selector: the register copies it into the gateway key
+        # metadata (register.provision_key), so the estop finds those workloads without the register.
+        seen = set()
+        for k in keys.values():
+            sel = (getattr(k, "metadata", None) or {}).get("workload_labels")
+            if isinstance(sel, dict) and sel and (sel_t := tuple(sorted(sel.items()))) not in seen:
+                seen.add(sel_t)
+                wl.update({w.id: w for w in self.o.list_workloads(labels={str(a): str(b) for a, b in sel.items()})})
         return self._run("agent", agent_id, operator, reason, list(keys.values()), list(wl.values()))
 
     def stop_team(self, team: str, operator: str, reason: str) -> dict[str, Any]:

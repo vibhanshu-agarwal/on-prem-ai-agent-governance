@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -309,7 +310,12 @@ def rotate_secrets(agent_id: str, body: ReasonIn, p: Principal = Depends(princip
     require(p, "operator")
     if p.kind != "user":
         raise Forbidden("secret rotation is a human action")
-    return app_().register.rotate_secrets(agent_id, p.subject, body.reason)
+    res = app_().register.rotate_secrets(agent_id, p.subject, body.reason)
+    if not res.get("complete", True):
+        # a key that is neither deleted nor blocked is still live: not a success. The body still carries the new
+        # key (issued once) and the per-key results so the operator can finish by hand.
+        return JSONResponse(status_code=502, content=jsonable_encoder(res))
+    return res
 
 
 @api.post("/v1/agents/{agent_id}/resume", tags=["stop"], summary="Reverse a stop/quarantine (creds stay revoked)")

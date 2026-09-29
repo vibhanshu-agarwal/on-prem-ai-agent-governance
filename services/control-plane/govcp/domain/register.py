@@ -113,6 +113,11 @@ class RegisterService:
             raise Forbidden(f"{actor.subject} may not register agents for team {team!r}")
         if self.find(agent_id):
             raise Conflict(f"agent {agent_id!r} already registered")
+        # one IdP subject resolves to exactly one agent: a second claim would let by_subject() pick either
+        for sub in spec.get("oidc_subjects") or []:
+            owner = self.by_subject(sub)
+            if owner is not None:
+                raise Conflict(f"oidc subject {sub!r} already belongs to agent {owner.agent_id!r}")
         tier = spec.get("sandbox_tier", "container")
         caps = list(spec.get("capabilities") or [])
         self.check_admission(tier, caps)
@@ -166,7 +171,9 @@ class RegisterService:
         issued = self.p.gateway.create_key(
             alias=alias, team=agent.team, models=agent.models, max_budget_usd=agent.max_budget_usd,
             metadata={"agent_id": agent.agent_id, "team": agent.team, "root_agent_id": agent.root_agent_id,
-                      "parent_agent_id": agent.parent_agent_id, "governed_by": "govcp"},
+                      "parent_agent_id": agent.parent_agent_id, "governed_by": "govcp",
+                      # lets the emergency stop find non-default-labelled workloads without the register
+                      "workload_labels": dict(agent.workload_labels)},
             blocked=blocked, budget_duration=agent.budget_duration)
         path = key_secret_path(agent.agent_id, alias)
         self.p.secrets.put(path, issued.raw_key, {"agent_id": agent.agent_id, "key_hash": issued.key_hash})
@@ -210,7 +217,11 @@ class RegisterService:
             a.gateway_keys = [k for k in a.gateway_keys if k.key_hash not in gone]
         self.mutate(agent_id, _drop_old)
         out["new_key"] = {"alias": issued.alias, "key_hash_prefix": issued.key_hash[:12]}
-        self.p.audit.append(actor, "secrets.rotated", agent_id, {"reason": reason, **out})
+        # complete = every old key is dead at the gateway (deleted, or at least blocked). A key that could be
+        # neither deleted nor blocked is still LIVE: the caller must not read that as success (API: HTTP 502).
+        out["complete"] = not any(k["result"].startswith("FAILED") for k in out["old_keys"])
+        self.p.audit.append(actor, "secrets.rotated" if out["complete"] else "secrets.rotation_incomplete",
+                            agent_id, {"reason": reason, **out}, severity="info" if out["complete"] else "alert")
         return {**out, "gateway_key": issued.raw_key, "key_hash": issued.key_hash}
 
     def raw_key(self, agent: Agent) -> str | None:

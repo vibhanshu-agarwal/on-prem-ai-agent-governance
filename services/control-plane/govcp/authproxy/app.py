@@ -84,8 +84,16 @@ def healthz():
     return {"ok": True}
 
 
+# Same inference-only allowlist as deploy/hardening/nginx.conf (T9): an SSO agent is resolved to its own gateway
+# key, but must not be able to reach the admin/management routes with it (e.g. /v1/key/*, /v1/team/*).
+ALLOWED_ROUTES = {("POST", "chat/completions"), ("POST", "completions"), ("POST", "embeddings"),
+                  ("GET", "models")}
+
+
 @app.api_route("/v1/{path:path}", methods=["GET", "POST"])
 async def proxy(path: str, request: Request):
+    if (request.method, path.strip("/")) not in ALLOWED_ROUTES:
+        return _err(403, "forbidden_route", "route not available to agents")
     auth = request.headers.get("authorization", "")
     raw = await request.body()
     model = None

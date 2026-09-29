@@ -19,7 +19,7 @@ from ..domain.ports import IdentityProvider
 
 class OIDCIdentityProvider(IdentityProvider):
     def __init__(self, issuer: str, jwks_url: str, admin_url: str | None = None, admin_token: str | None = None,
-                 jwks_cache_s: float = 300.0, leeway_s: float = 5.0):
+                 jwks_cache_s: float = 30.0, leeway_s: float = 5.0):
         self.issuer = issuer
         self.jwks_url = jwks_url
         self.admin_url = (admin_url or "").rstrip("/")
@@ -48,7 +48,7 @@ class OIDCIdentityProvider(IdentityProvider):
             kid = jwt.get_unverified_header(token).get("kid")
         except jwt.PyJWTError as e:
             raise Unauthorized(f"malformed token: {e}") from None
-        self._refresh()
+        self._refresh()          # TTL 30 s: a kid the IdP removed (key compromise) stops verifying within that bound
         if kid not in self._keys:
             self._refresh(force=True)
         key = self._keys.get(kid)

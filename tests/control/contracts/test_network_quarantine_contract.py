@@ -34,7 +34,7 @@ def fx(request):
     live_or_skip()
     from govcp.adapters.docker_orchestrator import DockerNetworkQuarantine, DockerOrchestrator
     o = DockerOrchestrator()
-    n = DockerNetworkQuarantine([cpclient.AGENTS_NET], ["gov-gateway", "gov-authproxy"], cpclient.AGENT_IMAGE)
+    n = DockerNetworkQuarantine([cpclient.AGENTS_NET], ["gov-gateway", "gov-gateway-edge", "gov-authproxy"], cpclient.AGENT_IMAGE)
     made = []
 
     def spawn():

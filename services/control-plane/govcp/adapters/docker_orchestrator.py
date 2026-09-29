@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 import re
+import time
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 import docker
@@ -147,16 +149,46 @@ class DockerNetworkQuarantine(NetworkQuarantine):
         self.chokepoints = list(chokepoints)
         self.helper_image = helper_image
         self.drain_ms = int(drain_timeout_s * 1000)
+        self.helper_timeout_s = drain_timeout_s + 20.0
 
     def _helper(self, target: str, script: str, net_admin: bool) -> str:
+        """Run a short-lived helper inside `target`'s network namespace. The container is created, started,
+        waited on and removed explicitly: `containers.run(remove=True)` leaks a helper whenever the start fails
+        (target vanished mid-stop) or the wait times out, which the T8 drills did see."""
+        c = None
         try:
-            out = self.d.containers.run(
+            c = self.d.containers.create(
                 self.helper_image, command=["sh", "-c", script], network_mode=f"container:{target}",
-                cap_add=["NET_ADMIN"] if net_admin else None, remove=True, stdout=True, stderr=True,
-                labels={HELPER_LABEL: HELPER_VALUE})
-            return out.decode(errors="replace")
+                cap_add=["NET_ADMIN"] if net_admin else None, labels={HELPER_LABEL: HELPER_VALUE})
+            c.start()
+            c.wait(timeout=self.helper_timeout_s)
+            return c.logs(stdout=True, stderr=True).decode(errors="replace")
         except Exception as e:  # noqa: BLE001
             return f"ERROR {type(e).__name__}: {e}"
+        finally:
+            if c is not None:
+                try:
+                    c.remove(force=True)
+                except Exception:  # noqa: BLE001 - swept by cleanup_helpers() on the next isolate
+                    pass
+
+    def cleanup_helpers(self, older_than_s: float = 30.0) -> int:
+        """Remove helper containers that outlived their run (crash of the caller, daemon hiccup)."""
+        n = 0
+        try:
+            found = self.d.containers.list(all=True, filters={"label": f"{HELPER_LABEL}={HELPER_VALUE}"})
+        except Exception:  # noqa: BLE001
+            return 0
+        now = time.time()
+        for c in found:
+            try:
+                created = datetime.fromisoformat(c.attrs["Created"][:26].rstrip("Z") + "+00:00").timestamp()
+                if now - created >= older_than_s:
+                    c.remove(force=True)
+                    n += 1
+            except Exception:  # noqa: BLE001
+                pass
+        return n
 
     @staticmethod
     def _parse(out: str) -> list[int] | None:
@@ -175,6 +207,7 @@ class DockerNetworkQuarantine(NetworkQuarantine):
         return out
 
     def isolate(self, workloads):
+        self.cleanup_helpers()                    # leftovers of an earlier crashed run, off the hot path of this stop
         results: dict[str, IsolationResult] = {}
         containers = {}
         for w in workloads:

@@ -283,3 +283,91 @@ def test_reconciler_does_not_reblock_a_key_of_an_agent_resumed_mid_tick(app):
     app.ports.gateway.block_key = real_block
     assert app.ports.gateway.key_status(kh).blocked is False
     assert any(r.action == "reconciler.reblock_reverted" for r in app.ports.audit.records)
+
+
+# ---------------------------------------------------------------- T9 leftovers
+def test_oidc_subject_belongs_to_exactly_one_agent(app):
+    from govcp.domain.errors import Conflict
+    first = _agent(app)["agent"]
+    sub = first.oidc_subjects[0]
+    with pytest.raises(Conflict, match=first.agent_id):
+        app.register.register({"agent_id": "thief-" + uuid.uuid4().hex[:4], "team": "hr", "max_budget_usd": 1,
+                               "models": ["m1"], "oidc_subjects": [sub]}, OPS)
+    assert app.register.by_subject(sub).agent_id == first.agent_id
+
+
+def test_rotate_secrets_reports_incomplete_when_an_old_key_can_be_neither_deleted_nor_blocked(app):
+    res = _agent(app)
+    aid = res["agent"].agent_id
+
+    def boom(*a, **k):
+        raise RuntimeError("gateway unreachable")
+    app.ports.gateway.delete_key = boom
+    app.ports.gateway.block_key = boom
+    out = app.register.rotate_secrets(aid, "alice", "drill")
+    assert out["complete"] is False and out["old_keys"][0]["result"].startswith("FAILED")
+    alerts = [r for r in app.ports.audit.records if r.action == "secrets.rotation_incomplete"]
+    assert alerts and alerts[-1].severity == "alert"
+
+
+def test_rotate_secrets_complete_flag_when_blocked_instead_of_deleted(app):
+    aid = _agent(app)["agent"].agent_id
+
+    def boom(*a, **k):
+        raise RuntimeError("delete failed")
+    app.ports.gateway.delete_key = boom
+    out = app.register.rotate_secrets(aid, "alice", "drill")
+    assert out["complete"] is True and "blocked" in out["old_keys"][0]["result"]
+
+
+def test_estop_finds_workloads_with_a_custom_selector_through_the_key_metadata(app):
+    from govcp.estop.core import EmergencyStop
+    aid = "custom-" + uuid.uuid4().hex[:4]
+    app.register.register({"agent_id": aid, "team": "hr", "max_budget_usd": 1, "models": ["m1"],
+                           "workload_labels": {"app": aid}}, OPS)
+    w = app.ports.orchestrator.add(Workload(id="w-" + aid, name="w-" + aid, image="img:1", labels={"app": aid},
+                                            host="mem-host", running=True, restart_policy="always",
+                                            networks=["agents"]))
+    es = EmergencyStop(app.ports.gateway, app.ports.orchestrator, app.ports.network, MemoryAudit(), grace_s=0)
+    out = es.stop_agent(aid, "op", "drill")           # no register access, no default label on the workload
+    assert [x["name"] for x in out["workloads"]] == [w.name]
+    assert not app.ports.orchestrator.w[w.id].running
+
+
+def test_jwks_cache_drops_a_removed_signing_key_within_the_short_ttl(monkeypatch):
+    import time as _time
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from govcp.adapters import oidc_identity as mod
+    from govcp.domain.errors import Unauthorized
+
+    def mk(kid):
+        k = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        jwk = jwt.algorithms.RSAAlgorithm.to_jwk(k.public_key(), as_dict=True) | {"kid": kid, "alg": "RS256", "use": "sig"}
+        return k, jwk
+    ka, ja = mk("A")
+    kb, jb = mk("B")
+    served = {"keys": [ja, jb]}
+
+    class R:
+        def json(self):
+            return served
+    monkeypatch.setattr(mod.httpx, "get", lambda *a, **k: R())
+    real = _time.time
+    now = [real()]
+    monkeypatch.setattr(mod.time, "time", lambda: now[0])
+    idp = mod.OIDCIdentityProvider("iss", "http://idp/jwks", leeway_s=5)
+
+    def token(key, kid):
+        return jwt.encode({"iss": "iss", "aud": "aud", "sub": "s", "iat": real() - 1, "exp": real() + 600}, key,
+                          algorithm="RS256", headers={"kid": kid})
+    ta = token(ka, "A")
+    assert idp.verify(ta, "aud").subject == "s"
+    served["keys"] = [jb]                              # the IdP removes A (compromised)
+    now[0] += 5
+    assert idp.verify(ta, "aud").subject == "s"        # still inside the cache window
+    now[0] += 31
+    with pytest.raises(Unauthorized):                  # was accepted for 300 s before T9
+        idp.verify(ta, "aud")
+    assert idp.verify(token(kb, "B"), "aud").subject == "s"
