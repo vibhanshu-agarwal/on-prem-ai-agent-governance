@@ -37,6 +37,9 @@ if [[ $ONLY_REPORT == 0 ]]; then
   fi
   mkdir -p "$RES"
   rm -f "$RES/results.json"
+  # the commit this run tests (a dirty tree says so): the report is stamped with it even if re-rendered later
+  printf '%s%s' "$(git rev-parse --short HEAD 2>/dev/null)" \
+    "$(git status --porcelain --untracked-files=no -- tests scripts services deploy policy 2>/dev/null | grep -q . && echo +uncommitted-changes)" > "$RES/run-commit"
   "$PY" -c "import sys; sys.path.insert(0,'tests/control'); import cpclient; sys.exit(0 if cpclient.stack_up() else 1)" \
     || { echo "stack not running: bash scripts/up.sh"; exit 1; }
 
