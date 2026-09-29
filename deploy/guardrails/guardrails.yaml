@@ -12,6 +12,9 @@ engine:
   timeout_ms: 800                     # per analyzer call; exceeded => engine unavailable => fail mode
   breaker_seconds: 2                  # after a failure, fail fast for this long instead of timing out per request
   score_threshold: 0.5
+  windowed: true                      # pattern-only entities: send Presidio just the windows around candidate matches
+  window_pad: 160                     # chars of context kept around each candidate (context words boost scores)
+  health_interval_s: 3                # background /health probe: keeps fail-closed accurate when a call is skipped
   chunk_chars: 6000                   # long texts are split and analysed concurrently
   chunk_overlap: 96
   cache_size: 4096                    # per-message analysis cache (agents resend conversation history)

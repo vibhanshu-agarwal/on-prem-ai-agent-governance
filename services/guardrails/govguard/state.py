@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import re
 import secrets
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -34,27 +36,66 @@ class LogAuditSink:
 
 
 class JsonlAuditSink:
-    """Append-only JSONL file (O_APPEND: safe for concurrent writers of small records)."""
+    """Append-only JSONL audit file.
 
-    def __init__(self, path: str | os.PathLike, clock: Callable[[], float] = time.time, also_log: bool = True):
+    Writes go through a queue drained by a daemon thread (`sync=False`, the gateway default) so file I/O
+    (slow and spiky on a Windows bind mount: measured multi-second stalls) can never block the gateway's
+    event loop. `sync=True` (CLI, tests) appends immediately. `flush()` waits for the queue to drain.
+    A record accepted by emit() is written unless the process is killed within ~`flush_seconds`."""
+
+    def __init__(self, path: str | os.PathLike, clock: Callable[[], float] = time.time, also_log: bool = True,
+                 sync: bool = True, flush_seconds: float = 0.05):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.clock = clock
-        self.also_log = also_log
+        self.clock, self.also_log, self.sync, self.flush_seconds = clock, also_log, sync, flush_seconds
+        self._q: "queue.SimpleQueue[str | None]" = queue.SimpleQueue()
+        self._thread: threading.Thread | None = None
+        self._idle = threading.Event()
+        self._idle.set()
 
-    def emit(self, event: str, **fields: Any) -> None:
-        rec = {"ts": round(self.clock(), 3), "event": event, **fields}
-        line = json.dumps(rec, default=str, sort_keys=True, separators=(",", ":")) + "\n"
+    def _append(self, lines: list[str]) -> None:
         try:
             fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o640)
             try:
-                os.write(fd, line.encode("utf-8"))
+                os.write(fd, "".join(lines).encode("utf-8"))
             finally:
                 os.close(fd)
         except OSError:
             log.exception("audit write failed")  # audit failure must be loud, never silent
+
+    def _drain(self) -> None:
+        while True:
+            first = self._q.get()
+            batch = [first] if first is not None else []
+            time.sleep(self.flush_seconds)          # coalesce a burst into one write
+            while True:
+                try:
+                    x = self._q.get_nowait()
+                except queue.Empty:
+                    break
+                if x is not None:
+                    batch.append(x)
+            if batch:
+                self._append(batch)
+            if self._q.empty():
+                self._idle.set()
+
+    def emit(self, event: str, **fields: Any) -> None:
+        rec = {"ts": round(self.clock(), 3), "event": event, **fields}
+        line = json.dumps(rec, default=str, sort_keys=True, separators=(",", ":")) + "\n"
+        if self.sync:
+            self._append([line])
+        else:
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._drain, name="govguard-audit", daemon=True)
+                self._thread.start()
+            self._idle.clear()
+            self._q.put(line)
         if self.also_log:
             log.info("audit %s", line.strip())
+
+    def flush(self, timeout: float = 5.0) -> bool:
+        return self._idle.wait(timeout) if not self.sync else True
 
 
 class MemoryAuditSink:
@@ -93,6 +134,7 @@ class FileOverrideStore:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.audit, self.max_ttl, self.clock, self.cache_seconds = audit, max_ttl_seconds, clock, cache_seconds
         self._cache: tuple[float, list[dict]] | None = None
+        self._refreshing = False
 
     def grant(self, agent_id: str, rule: str, ttl_seconds: int, reason: str, granted_by: str) -> dict:
         if not agent_id:
@@ -131,18 +173,32 @@ class FileOverrideStore:
                         rule=rec["rule"], revoked_by=revoked_by)
         return rec
 
-    def _all(self) -> list[dict]:
-        now = time.monotonic()
-        if self._cache and now - self._cache[0] < self.cache_seconds:
-            return self._cache[1]
+    def _read_dir(self) -> list[dict]:
         recs = []
         for p in self.dir.glob("ovr_*.json"):
             try:
                 recs.append(json.loads(p.read_text(encoding="utf-8")))
             except (OSError, ValueError):
                 log.warning("unreadable override file %s ignored", p)  # unreadable = not granted
-        self._cache = (now, recs)
         return recs
+
+    def _refresh(self) -> None:
+        try:
+            self._cache = (time.monotonic(), self._read_dir())
+        finally:
+            self._refreshing = False
+
+    def _all(self) -> list[dict]:
+        """cache_seconds == 0: read the directory every call (tests, CLI). Otherwise stale-while-revalidate:
+        the request path never touches the disk; a worker thread refreshes the snapshot at most every
+        cache_seconds (grants made by another process become visible within about that long)."""
+        now = time.monotonic()
+        if self.cache_seconds == 0 or self._cache is None:
+            self._cache = (now, self._read_dir())
+        elif now - self._cache[0] >= self.cache_seconds and not self._refreshing:
+            self._refreshing = True
+            threading.Thread(target=self._refresh, name="govguard-ovr", daemon=True).start()
+        return self._cache[1]
 
     def list(self, agent_id: str | None = None, include_inactive: bool = False) -> list[dict]:
         now = self.clock()

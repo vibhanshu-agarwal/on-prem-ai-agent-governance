@@ -83,6 +83,7 @@ def echo_received(container="gov-t5-mock-echo") -> list:
 
 
 def audit_events(path=STATE / "audit.jsonl", since_ts: float = 0.0) -> list:
+    time.sleep(0.5)                       # the gateway's audit sink writes from a background thread (~50 ms batches)
     if not path.exists():
         return []
     out = []

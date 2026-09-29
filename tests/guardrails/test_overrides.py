@@ -119,3 +119,29 @@ def test_cli_approvals_roundtrip(tmp_path, capsys):
     assert guardctl(["--state", str(state), "approvals", "approve", rec["id"], "--by", "bob"]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "approved"
     assert guardctl(["--state", str(state), "approvals", "deny", rec["id"], "--by", "bob"]) == 1      # already decided
+
+
+def test_async_audit_sink_never_blocks_emit_and_flushes(tmp_path):
+    import time
+    sink = JsonlAuditSink(tmp_path / "a.jsonl", also_log=False, sync=False)
+    t = time.perf_counter()
+    for i in range(200):
+        sink.emit("evt", i=i)
+    assert (time.perf_counter() - t) < 0.25                         # emit() only enqueues
+    assert sink.flush(5)
+    lines = [json.loads(l) for l in (tmp_path / "a.jsonl").read_text().splitlines()]
+    assert [l["i"] for l in lines] == list(range(200))
+
+
+def test_override_snapshot_refreshes_off_the_request_path(tmp_path):
+    import time
+    audit = JsonlAuditSink(tmp_path / "a.jsonl", also_log=False)
+    granter = FileOverrideStore(tmp_path / "o", audit, cache_seconds=0)
+    reader = FileOverrideStore(tmp_path / "o", audit, cache_seconds=0.2)       # like the gateway: another process grants
+    assert reader.active_rules("a") == {}
+    granter.grant("a", "injection", 600, "reason long enough", "alice")
+    assert reader.active_rules("a") == {}                                       # stale snapshot served, no disk read
+    time.sleep(0.5)
+    reader.active_rules("a")                                                    # triggers the background refresh
+    time.sleep(0.3)
+    assert "injection" in reader.active_rules("a")

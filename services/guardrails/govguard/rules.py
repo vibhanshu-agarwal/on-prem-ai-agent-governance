@@ -56,9 +56,31 @@ _B64_BLOB = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}")
 
 
 def normalise(text: str) -> str:
-    t = unicodedata.normalize("NFKC", text)
-    t = "".join(ch for ch in t if unicodedata.category(ch) != "Cf")
+    t = text
+    if not t.isascii():   # the slow per-character path is only needed when confusables/invisibles can exist
+        t = unicodedata.normalize("NFKC", t)
+        t = "".join(ch for ch in t if unicodedata.category(ch) != "Cf")
     return re.sub(r"[ \t\r\f\v]+", " ", t).lower()
+
+
+# Cheap literal anchors: a pattern's regex only runs when one of its anchors occurs in the text
+# (measured on 48K chars of ordinary prose: see docs/results/T5.md).
+_ANCHORS = {
+    "override_instructions": ("ignore", "disregard", "forget", "override", "bypass", "discard"),
+    "reveal_prompt": ("reveal", "print", "show", "output", "repeat", "leak", "disclose", "display"),
+    "role_hijack": ("you are now", "from now on", "new instruction", "new task", "new role", "new objective"),
+    "jailbreak_persona": ("act as", "do anything now", "dan mode"),
+    "chat_template_markers": ("<|", "[inst", "[/inst", "<<", "###", "system:", "assistant:", "system :", "assistant :"),
+    "authority_claim": ("this is a", "this is system", "this is admin", "this is developer", "this is security"),
+    "exfiltration_send": ("send", "forward", "email", "e-mail", "post", "upload", "exfiltrate", "transmit", "leak"),
+    "exfiltration_sensitive": ("send", "forward", "email", "e-mail", "post", "upload", "exfiltrate", "transmit",
+                               "leak", "share"),
+    "markdown_image_exfil": ("![",),
+    "conceal_from_user": ("tell", "inform", "mention", "alert", "notify", "show"),
+    "shell_pipe": ("curl", "wget", "rm -rf"),
+    "tool_coercion": ("tool", "function", "command"),
+    "urgent_override": ("important", "urgent", "critical"),
+}
 
 
 @dataclass(frozen=True)
@@ -71,6 +93,9 @@ def scan_injection(text: str) -> InjectionResult:
     score, matched = 0, []
     norm = normalise(text)
     for name, rx, w in INJECTION_PATTERNS:
+        anchors = _ANCHORS.get(name)
+        if anchors and not any(a in norm for a in anchors):
+            continue
         if rx.search(norm):
             score += w
             matched.append(name)
@@ -96,9 +121,26 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [
 ]
 
 
+_SECRET_ANCHORS = {   # case-sensitive literal anchors (password_assignment is matched on the lower-cased text)
+    "aws_access_key": ("AKIA", "ASIA"), "private_key": ("-----BEGIN",),
+    "github_token": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_"), "api_key_sk": ("sk-",), "slack_token": ("xox",),
+    "google_api_key": ("AIza",), "jwt": ("eyJ",),
+    "password_assignment": ("password", "passwd", "pwd", "secret", "api_key", "api-key", "apikey", "token"),
+}
+
+
 def find_secrets(text: str) -> list[tuple[str, int, int]]:
     hits: list[tuple[str, int, int]] = []
+    lower = None
     for name, rx in SECRET_PATTERNS:
+        anchors = _SECRET_ANCHORS.get(name)
+        if anchors:
+            if name == "password_assignment":
+                lower = lower if lower is not None else text.lower()
+                if not any(a in lower for a in anchors):
+                    continue
+            elif not any(a in text for a in anchors):
+                continue
         for m in rx.finditer(text):
             hits.append((name, m.start(), m.end()))
     return hits
