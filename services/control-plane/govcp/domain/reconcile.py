@@ -57,6 +57,8 @@ class Reconciler:
                 targets[w.id] = (w, f"rule:{r['rule_id']}")
                 break
         for w, why in targets.values():
+            if why.startswith("agent:") and not self._still_stopped(why[6:]):
+                continue                      # resumed since the start of this tick (T8: resume/reconciler race)
             t0 = time.monotonic()
             iso = self.p.network.isolate([w])
             self.p.orchestrator.prevent_restart(w.id)
@@ -76,8 +78,22 @@ class Reconciler:
                 for a, k in batch:
                     st = self.p.gateway.key_status(k.key_hash)
                     if st is not None and not st.blocked:
+                        # T8: re-read the desired state around the block. A resume that lands between this tick's
+                        # snapshot and the block (it sets desired_state=running, then unblocks) used to leave the
+                        # agent "running" in the register with its key blocked for good (found by the pilot sim).
+                        if not self._still_stopped(a.agent_id):
+                            continue
                         self.p.gateway.block_key(k.key_hash)
+                        if not self._still_stopped(a.agent_id):
+                            self.p.gateway.unblock_key(k.key_hash)
+                            self.p.audit.append("reconciler", "reconciler.reblock_reverted", a.agent_id,
+                                                {"alias": k.alias, "why": "agent resumed during the re-block"})
+                            continue
                         reblocked.append(k.alias)
                         self.p.audit.append("reconciler", "reconciler.reblocked_key", a.agent_id,
                                             {"alias": k.alias}, severity="alert")
         return {"enforced": enforced, "reblocked": reblocked}
+
+    def _still_stopped(self, agent_id: str) -> bool:
+        cur = self.register.find(agent_id)
+        return cur is not None and cur.desired_state == DESIRED_STOPPED

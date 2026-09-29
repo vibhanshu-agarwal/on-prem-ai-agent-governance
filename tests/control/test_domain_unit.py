@@ -262,3 +262,24 @@ def test_rotate_secrets_reissues_key_and_credentials(app):
     s = app.ports.secrets.get(cred)
     assert s is not None and not s.revoked and s.value not in ("pw", None)
     assert any(r.action == "secrets.rotated" for r in app.ports.audit.records)
+
+
+def test_reconciler_does_not_reblock_a_key_of_an_agent_resumed_mid_tick(app):
+    """T8 regression (found by the pilot simulation): resume between the reconciler's snapshot and its re-block
+    left the agent 'running' with its key blocked forever."""
+    res = _agent(app)
+    aid, kh = res["agent"].agent_id, res["agent"].gateway_keys[0].key_hash
+    app.stop.stop([aid], "alice", "test")
+    app.ports.gateway.unblock_key(kh)                      # out-of-band unblock: the reconciler must re-block ...
+    rec = app.reconciler
+    rec.key_check_every = 1
+    real_block = app.ports.gateway.block_key
+
+    def block_then_resume(h):                              # ... but the operator resumes at that very moment
+        real_block(h)
+        app.register.mutate(aid, lambda a: setattr(a, "desired_state", "running"))
+    app.ports.gateway.block_key = block_then_resume
+    rec.run_once()
+    app.ports.gateway.block_key = real_block
+    assert app.ports.gateway.key_status(kh).blocked is False
+    assert any(r.action == "reconciler.reblock_reverted" for r in app.ports.audit.records)
