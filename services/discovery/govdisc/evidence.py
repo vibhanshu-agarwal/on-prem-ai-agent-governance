@@ -50,6 +50,7 @@ def container_evidence(c: ContainerInfo, hints: Hints, source: str, governed: li
         "container_id": c.id[:12],
         "container_name": c.name,
         "image": c.image,
+        "image_id": c.image_id,                   # lets the control plane check a register image binding
         "labels": dict(sorted(c.labels.items())),
         "networks": dict(sorted(c.networks.items())),
         "on_governed_network": sorted(set(c.networks) & set(governed)),

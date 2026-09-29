@@ -22,7 +22,8 @@ def info_from_attrs(a: dict) -> ContainerInfo:
         id=a.get("Id", ""), name=(a.get("Name") or "").lstrip("/"), image=cfg.get("Image") or "",
         labels=dict(cfg.get("Labels") or {}),
         networks={n: (v or {}).get("IPAddress", "") for n, v in nets.items()},
-        created=a.get("Created", ""), started=st.get("StartedAt", ""), status=st.get("Status", ""))
+        created=a.get("Created", ""), started=st.get("StartedAt", ""), status=st.get("Status", ""),
+        image_id=a.get("Image", ""))
 
 
 class DockerSdkSource(ContainerSource):

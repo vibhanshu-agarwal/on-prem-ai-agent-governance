@@ -32,6 +32,7 @@ class ContainerInfo:
     created: str = ""                                          # ISO timestamp
     started: str = ""
     status: str = ""
+    image_id: str = ""                                         # content-addressed image id (sha256:...)
 
 
 @dataclass

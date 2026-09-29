@@ -20,6 +20,9 @@ from .register import RegisterService
 from .repository import KV, PROPOSALS
 
 
+WORKLOAD_IMAGE_LABEL = "workload_image"   # agent label binding an agent to the image its workloads run
+
+
 def _day(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
 
@@ -40,8 +43,20 @@ class DiscoveryService:
         for p in allp:
             if p["fingerprint"] == obs.fingerprint and p["status"] in ("pending", "approved"):
                 return {**p, "duplicate": True}
-        if obs.labels.get("govpilot.agent_id") and self.register.find(obs.labels["govpilot.agent_id"]):
-            return {"status": "known", "agent_id": obs.labels["govpilot.agent_id"], "fingerprint": obs.fingerprint}
+        spoof = None
+        claimed = obs.labels.get("govpilot.agent_id")
+        agent = self.register.find(claimed) if claimed else None
+        if agent is not None:
+            # A label is only a claim: anyone can copy `govpilot.agent_id` onto a rogue container. When the
+            # register binds the agent to an image (agent label `workload_image`, a tag or a digest), the
+            # observed workload must run that image to be folded as known; otherwise it is filed as a
+            # suspected spoof with high priority (zero budget, no key, like every proposal).
+            bound = (agent.labels or {}).get(WORKLOAD_IMAGE_LABEL)
+            seen = {obs.image, (obs.evidence or {}).get("image"), (obs.evidence or {}).get("image_id")} - {None, ""}
+            if not bound or bound in seen:
+                return {"status": "known", "agent_id": claimed, "fingerprint": obs.fingerprint,
+                        "binding": "image" if bound else "unbound"}
+            spoof = {"claimed_agent_id": claimed, "expected_image": bound, "seen_image": obs.image}
         today = _day(time.time())
         counter = f"feedcount:{feed}:{today}"
         self.p.repo.insert(KV, counter, {"count": 0})
@@ -62,8 +77,15 @@ class DiscoveryService:
             "proposal_id": "dp-" + uuid.uuid4().hex[:12], "feed": feed, "fingerprint": obs.fingerprint,
             "observation": obs.to_dict(), "status": "pending", "budget_usd": 0.0, "gateway_key": None,
             "created_at": time.time(), "day": today, "submitted_by": submitted_by or feed,
+            "priority": "high" if spoof else "normal",
         }
+        if spoof:
+            prop["flags"] = ["label_spoof_suspected"]
+            prop["spoof"] = spoof
         self.p.repo.put(PROPOSALS, prop["proposal_id"], prop)
+        if spoof:
+            self.p.audit.append(submitted_by or feed, "discovery.label_spoof_suspected", prop["proposal_id"],
+                                {"feed": feed, "fingerprint": obs.fingerprint, **spoof}, severity="alert")
         self.p.audit.append(submitted_by or feed, "discovery.proposed", prop["proposal_id"], {
             "feed": feed, "fingerprint": obs.fingerprint, "name": obs.name, "image": obs.image,
             "suggested_team": obs.suggested_team, "budget_usd": 0.0})
