@@ -21,7 +21,7 @@ def down():
     g = Gateway("http://127.0.0.1:4105", env["LITELLM_MASTER_KEY"])
     yield g
     g.cleanup()
-    sh(*COMPOSE, "rm", "-sf", "gateway-guard-down", check=False)
+    sh(*COMPOSE, "rm", "-sf", "gateway-guard-down", "mock-echo", check=False)
 
 
 @pytest.fixture(scope="module")

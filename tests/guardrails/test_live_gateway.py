@@ -23,6 +23,7 @@ def gw():
     g = Gateway(f"http://127.0.0.1:{env.get('GATEWAY_PORT', '4000')}", env["LITELLM_MASTER_KEY"])
     yield g
     g.cleanup()
+    sh(*COMPOSE, "rm", "-sf", "mock-echo", check=False)      # keep tests/foundation's exact network membership true
 
 
 @pytest.fixture(scope="module")
