@@ -41,10 +41,13 @@ JUL = [("Every request attributed to agent, run, user/team, provider, model, tok
        ("p95 overhead budget met (provider-free gateway overhead p95 <= 150 ms, p99 <= 300 ms)", ["M-08"], None),
        ("Backup/restore test", ["M-09"], None)]
 NOT_IN_T8 = [
-    ("Named operator, business-hours support path, outage runbook", "T9 (runbook) / T10: not done yet"),
+    ("Named operator, business-hours support path, outage runbook",
+     "Outage runbook: docs/runbook/README.md (T9; procedures use only commands that exist in the repo). A named operator "
+     "and a support rota are organisational, not something a portfolio pilot can supply."),
     ("Delivered image: pinned versions, SBOM, third-party notices, deployment + rollback instructions",
-     "Pinned versions: yes (T1/T5/T6 pins). SBOM + NOTICE: T9, not done. Deployment: scripts/up.sh; policy "
-     "rollback: M-06; image rollback: re-pin tag and scripts/up.sh --recreate (not drilled)")]
+     "Digest pins (release/images.lock, checked by tests/hardening), CycloneDX SBOMs (release/sbom), "
+     "THIRD_PARTY_NOTICES.md (T9). Deployment: scripts/up.sh; policy rollback: M-06; image rollback: re-pin the digest "
+     "and scripts/up.sh --recreate (not drilled)")]
 
 
 def fmt_money(x):
@@ -108,9 +111,16 @@ def measured(aid: str, m: dict) -> str:  # noqa: C901 - one formatter per accept
             return (f"microvm admitted; gvisor and container denied ('weaker than required microvm'); register "
                     f"refuses the mismatch ({m['register_status_for_mismatch']}); no bundle = exit {m['no_policy_bundle_exit_code']}")
         if aid == "M-01":
+            orph = ""
+            if "orphans_by_state" in m:
+                states = ", ".join(f"{n} {k}" for k, n in sorted(m["orphans_by_state"].items())) or "none"
+                why = "; ".join(f"{n} x {c}" for c, n in sorted(m.get("orphans_aborted_causes", {}).items()))
+                orph = (f"; run trees: {m['orphan_parent_runs']} parent runs without a gateway row of their own "
+                        f"({states}{'; aborted by ' + why if why else ''}), **{len(m.get('orphans_unaccounted', []))} unaccounted** "
+                        f"(evidence: {', '.join(m.get('orphan_evidence_sources') or ['-'])})")
             return (f"{m['requests']} requests in {m['window_min']} min: {m['attributed']} attributed, "
                     f"{m['rejected_before_spend']} refused before spend, **{m['unattributed']} unattributed**; "
-                    f"run kinds {', '.join(m['run_kinds'])}")
+                    f"run kinds {', '.join(m['run_kinds'])}{orph}")
         if aid == "M-02":
             a, b = m["parallel_requests"], m["parallel_streams"]
             return (f"60 parallel: {a['admitted']} admitted, spend {fmt_money(a['spend_logs_usd'])} of $0.002; "
@@ -321,6 +331,13 @@ STATIC = """## What T8 changed to make the stack pass together (integration fixe
 | 13 | T2 team-cap test required spend from >= 2 keys, but under load the key without a key budget won every race of the burst (the team cap held every time) | one request per key before the parallel burst |
 
 New capabilities built for acceptance tests that had no implementation: commit-time authorization of consequential actions (`POST /v1/actions/authorize`, used by a mock tool gateway; the stop report now records when the desired state was persisted), secret rotation (`POST /v1/agents/{id}/rotate-secrets`), guardrail break-glass (`guardctl override grant --rule breakglass`, <= 1 h, degrade-never-open), `scripts/backup.sh` / `scripts/restore.sh`, the provider-free overhead probe (`scripts/overhead_probe.py`) and the pilot simulation.
+
+## Changes made after the T9 review's full run (27 of 28, M-01 failed)
+
+| # | Problem | Fix |
+|---|---|---|
+| 14 | **M-01 failed: 5 parent runs the gateway had no row for (tolerance 3); unattributed was 0.** All five were finance-agent tasks aborted while a fail-closed control refused a tool call: the PII guardrail with Presidio down (during `scripts/up.sh --recreate` and the `tests/guardrails` suite) or the gateway being re-created. A task makes its own LLM call last (the summary), after its tool calls, so a task aborted at its first tool call never gets one: the gateway holds child rows that name a parent run it has no row for. That is not a spend hole (every request was attributed to an agent, run and team), but the run tree cannot be closed from the ledger. Three fixes were considered. Raising the tolerance was rejected (a count hides real holes). Running M-01 before the outage drills was rejected (the drills are exactly when attribution is at risk, and the result would depend on suite order). Chosen: **the agent records how every run ended, durably, and M-01 accounts for every dangling parent from that record.** The agent library writes `run.start` / `run.end` (status and, for a gateway refusal, HTTP status, error type and which request was refused) to a journal on a Docker volume that outlives container re-creation (`govagent.events.JournalSink`; `docker logs` did not do: 3 of the 5 orphans came from the container `up.sh --recreate` had replaced, and its logs were gone). `scripts/run_journal.py` classifies each dangling parent as ended ok, aborted (with cause, e.g. `503 guardrail_unavailable`), interrupted (the agent process was replaced before the run ended), in flight, or **unaccounted**. M-01 now fails on any unaccounted parent, with no tolerance by count: a parent with no journal record, a record of another agent, or a run that neither ended nor was interrupted is still a finding. Parents that started just before the 30-minute window are found by reading the ledger 10 minutes further back, which replaces the old "window edge" tolerance. Also found on the way: rows refused during LiteLLM's own auth (budget exceeded) carry only the key alias, and a rotated key's alias is `<agent>-<n>`, so those rows were silently outside M-01's population; they are counted now. Limit: the journal is the agent's own account. It explains a dangling link, it does not authenticate it; the security property (every spend attributed to a key, an agent and a team) comes from the gateway alone. | `JournalSink` + `error_fields` (`agents/govagent/events.py`), terminal-state records in `runtime.py` / `tools.py` / `delegation.py`, volume `govpilot_agent_journal` (`deploy/compose.agents.yml`), `scripts/run_journal.py`, `tests/acceptance/test_m01_attribution.py`; 17 offline tests (`tests/agents/test_run_journal.py`) |
+| 15 | **Client-supplied provider credentials passed through the gateway** (T9 review open item). On LiteLLM v1.100.3 an agent's own `api_key`, `extra_headers` or `headers` replaced the gateway's provider credential on the call (native LiteLLM refuses only `api_base` / `base_url`, unconditionally). Two consequences: a credential the platform never issued travelling through it (spend on a provider account the organisation does not control, bypassing provider-side allowlists and audit), and a cross-agent denial of service: a wrong key makes the provider answer 401, the router puts the shared deployment into cooldown and every other agent gets 429 "No deployments available" until it ends (observed on the live stack while probing). Fix: a first-in-chain callback `deploy/litellm/callbacks/client_credentials_guard.py` refuses (400 `client_credentials_not_allowed`, before any provider is called) any request that carries provider credentials, endpoints or provider-bound headers at the top level or in the containers LiteLLM merges into the call (`extra_body`, `litellm_params`, `metadata`, ...), audits one `GOVPILOT_REQUEST_GUARD` line with the field names only (never values), and offers per-field opt-in and an audit-only mode as configuration. `x-litellm-disable-callbacks` was checked and does not disable the budget guard. | `tests/hardening/test_client_credentials_unit.py` (28 offline), `tests/hardening/test_client_credentials_live.py` (11 against the running gateway; the first fails on the unpatched gateway with the provider's 401) |
 
 ## Findings worth knowing
 
