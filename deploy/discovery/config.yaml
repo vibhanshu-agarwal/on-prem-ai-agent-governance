@@ -22,7 +22,7 @@ governed_networks: [govpilot_agents, govpilot_agents_sso]
 
 platform:                              # the platform's own containers are not shadow AI
   ignore_names: ["^gov-", "^t2-", "^optimus"]
-  ignore_labels: ["govpilot.test"]     # throwaway containers made by the T3 test-suite
+  ignore_labels: ["govpilot.test", "govpilot.t8test"]   # throwaway containers made by the T3 / T8 test suites
   ignore_label_values:                 # compose projects that ARE the platform (also catches recreate-time names)
     com.docker.compose.project: [govpilot, govpilot-obs, govpilot-discovery, govpilot-t2]
 
