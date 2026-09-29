@@ -200,3 +200,27 @@ def test_engine_down_at_first_use_is_known_before_a_clean_prompt_is_trusted():
             await e.analyze("perfectly clean text, no candidates", ["EMAIL_ADDRESS"], "en", 0.5)
         await e.aclose()
     asyncio.run(scenario())
+
+
+# --------------------------------------------------------------------------- T8 break-glass
+def test_breakglass_degrades_a_fail_closed_agent_for_a_limited_time_and_is_audited(make_harness):
+    """Engine outage + fail-closed agent: a break-glass grant (time-limited, reasoned, named approver) lets the
+    agent through on the builtin engine (structured PII still masked, never fail-open); expiry restores 503."""
+    from govguard.state import OverrideError
+    h = make_harness(engine=DownEngine())
+    msg = [{"role": "user", "content": "pay invoice, contact ap@vendor.example"}]
+    with pytest.raises(GuardrailBlocked):
+        h.request(msg, agent="finance-recon-agent")
+    with pytest.raises(OverrideError):                                          # capped at one hour
+        h.overrides.grant("finance-recon-agent", "breakglass", 7200, "presidio outage, month-end close", "alice")
+    rec = h.overrides.grant("finance-recon-agent", "breakglass", 600, "presidio outage, month-end close", "alice")
+    d, out = h.request(msg, agent="finance-recon-agent")
+    assert d["messages"][0]["content"] == "pay invoice, contact <EMAIL_ADDRESS>" and out.degraded
+    assert h.audit.of("override.used")[-1]["override_id"] == rec["id"]
+    assert h.audit.of("guardrail.breakglass_degraded")[-1]["granted_by"] == "alice"
+    with pytest.raises(GuardrailBlocked):                                       # other agents are unaffected
+        h.request(msg, agent="hr-agent")
+    h.clock.advance(601)
+    with pytest.raises(GuardrailBlocked) as e:                                  # expired: fail closed again
+        h.request(msg, agent="finance-recon-agent")
+    assert e.value.code == "guardrail_engine_unavailable"

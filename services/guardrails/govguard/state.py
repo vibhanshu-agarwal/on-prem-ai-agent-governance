@@ -21,8 +21,12 @@ from typing import Any, Callable, Protocol
 
 log = logging.getLogger("govpilot.guardrails")
 
-OVERRIDABLE = re.compile(r"^(pii(\.[A-Z_]+)?|injection|secrets|tool\.[A-Za-z0-9_.:-]+)$")
+OVERRIDABLE = re.compile(r"^(pii(\.[A-Z_]+)?|injection|secrets|tool\.[A-Za-z0-9_.:-]+|breakglass)$")
 DEFAULT_MAX_OVERRIDE_TTL = 24 * 3600
+# T8 break-glass: while the guardrail ENGINE is down, a fail-closed agent is degraded to the builtin
+# (regex) engine instead of being refused. Never fail-open, time-limited, audited like every override.
+BREAKGLASS_RULE = "breakglass"
+BREAKGLASS_MAX_TTL = 3600
 MIN_REASON_CHARS = 10
 
 
@@ -146,6 +150,8 @@ class FileOverrideStore:
             raise OverrideError("ttl_seconds must be > 0")
         if ttl_seconds > self.max_ttl:
             raise OverrideError(f"ttl_seconds {ttl_seconds} exceeds the maximum {self.max_ttl}")
+        if rule == BREAKGLASS_RULE and ttl_seconds > BREAKGLASS_MAX_TTL:
+            raise OverrideError(f"break-glass is limited to {BREAKGLASS_MAX_TTL} s (asked {ttl_seconds})")
         if len((reason or "").strip()) < MIN_REASON_CHARS:
             raise OverrideError(f"a reason of at least {MIN_REASON_CHARS} characters is required")
         if not (granted_by or "").strip():

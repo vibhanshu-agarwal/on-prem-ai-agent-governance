@@ -133,6 +133,14 @@ class GuardrailPipeline:
             self._evt(ctx, "engine.unavailable", engine=self.engine.name, fail_mode=mode,
                       data_classification=pol.data_classification, error=str(e)[:200])
             if mode == "closed":
+                # T8 break-glass: a time-limited, audited grant degrades (never opens) this agent to the builtin engine
+                bg = self._override(ctx, self.overrides.active_rules(ctx.agent_id), "breakglass",
+                                    engine=self.engine.name, data_classification=pol.data_classification)
+                if bg:
+                    self._evt(ctx, "guardrail.breakglass_degraded", override_id=bg["id"], granted_by=bg["granted_by"])
+                    out.degraded = True
+                    return await getattr(self.fallback, fn_name)(*args)
+            if mode == "closed":
                 raise self._blocked(ctx, "engine", GuardrailBlocked(
                     503, "guardrail_unavailable", "guardrail_engine_unavailable",
                     "The PII guardrail engine is unavailable and this agent's data classification "
