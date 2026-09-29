@@ -18,6 +18,9 @@ services:
       GRAFANA_URL: ${GRAFANA_PUBLIC_URL:-http://127.0.0.1:3400}
       OPENLIT_URL: ${OPENLIT_PUBLIC_URL:-http://127.0.0.1:3300}
       API_DOCS_URL: ${CP_PUBLIC_URL:-http://127.0.0.1:8100}/docs
+      # DEMO ONLY: enables the "acting as" persona picker, which lets any browser on this host act as an
+      # approver. The code default is off (read-only viewer, no actions). Never enable outside a local demo.
+      STATUS_DEMO_MODE: ${STATUS_DEMO_MODE:-1}
       STATUS_PERSONAS: alice,bob,carol,dave,erin
       IDP_PASSWORD_ALICE: ${IDP_PASSWORD_ALICE:?run scripts/control-plane-up.sh}
       IDP_PASSWORD_BOB: ${IDP_PASSWORD_BOB:?}

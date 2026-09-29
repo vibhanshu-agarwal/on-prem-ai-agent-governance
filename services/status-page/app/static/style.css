@@ -126,3 +126,4 @@ dialog::backdrop { background: rgba(5,10,25,.6); backdrop-filter: blur(3px); }
   .dlg .two { grid-template-columns: 1fr; } .persona span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+.persona[hidden] { display: none; }

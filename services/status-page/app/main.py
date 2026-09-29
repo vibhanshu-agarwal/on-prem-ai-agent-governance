@@ -8,6 +8,12 @@ CP_URL / IDP_TOKEN_URL at another implementation of the same API and nothing els
 Personas: the demo IdP has five humans. The page can act as any persona that has a password
 in the environment (STATUS_PERSONAS), so the two-approver flow can be shown from one screen.
 The browser sends only a persona *name*; it is validated against the configured list.
+
+The persona picker is DEMO-ONLY: it lets an unauthenticated browser act as an approver. It is
+enabled only when STATUS_DEMO_MODE=1 (the demo compose file sets it). With the flag off (the
+code default) the page is read-only: the X-Persona header is ignored, every request runs as
+STATUS_READONLY_PERSONA (a viewer) and all state-changing routes return 403. A real deployment
+must put the page behind SSO and map the signed-in user to their own token instead.
 """
 from __future__ import annotations
 
@@ -20,6 +26,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -30,8 +37,21 @@ GRAFANA_URL = os.environ.get("GRAFANA_URL", "http://127.0.0.1:3400")
 OPENLIT_URL = os.environ.get("OPENLIT_URL", "http://127.0.0.1:3300")
 API_DOCS_URL = os.environ.get("API_DOCS_URL", "http://127.0.0.1:8100/docs")
 DEFAULT_PERSONA = os.environ.get("STATUS_DEFAULT_PERSONA", "alice")
+DEMO_MODE = os.environ.get("STATUS_DEMO_MODE", "0").strip().lower() in ("1", "true", "yes")
+READONLY_PERSONA = os.environ.get("STATUS_READONLY_PERSONA", "erin")
 PERSONA_NAMES = [p.strip() for p in os.environ.get("STATUS_PERSONAS", "alice,bob,carol,dave,erin").split(",")
                  if p.strip()]
+if not DEMO_MODE:
+    PERSONA_NAMES, DEFAULT_PERSONA = [READONLY_PERSONA], READONLY_PERSONA
+# DNS-rebinding guard: only answer to the loopback names the port is published on.
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("STATUS_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if h.strip()]
+_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$")
+
+
+def _check_id(v: str) -> str:
+    if not _ID.match(v) or ".." in v:
+        raise HTTPException(400, "invalid id")
+    return v
 
 # Hide test-fixture agents (ids/teams like t3a-1f2e, t3dlg-...) left behind by the automated suites.
 # Empty string shows everything. Purely presentational; the register is untouched.
@@ -54,7 +74,7 @@ def _available() -> list[str]:
 
 
 def _persona(request: Request) -> str:
-    p = request.headers.get("x-persona") or DEFAULT_PERSONA
+    p = (request.headers.get("x-persona") or DEFAULT_PERSONA) if DEMO_MODE else READONLY_PERSONA
     if p not in _available():
         raise HTTPException(400, f"unknown persona {p!r}")
     return p
@@ -118,10 +138,21 @@ async def _http_err(_: Request, exc: HTTPException):
 
 @app.middleware("http")
 async def _csrf(request: Request, call_next):
-    # State-changing calls must carry a custom header, which a cross-site form cannot set.
-    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("x-requested-with") != "status-page":
-        return JSONResponse({"detail": "missing X-Requested-With"}, status_code=403)
+    # State-changing calls must carry a custom header, which a cross-site form cannot set (and no CORS is
+    # configured, so a cross-origin fetch with it fails preflight). Origin, when sent, must be this host.
+    if request.method not in ("GET", "HEAD"):
+        if not DEMO_MODE:
+            return JSONResponse({"detail": "read-only: actions are disabled (STATUS_DEMO_MODE is off)"}, status_code=403)
+        if request.headers.get("x-requested-with") != "status-page":
+            return JSONResponse({"detail": "missing X-Requested-With"}, status_code=403)
+        origin = request.headers.get("origin")
+        if origin and origin.split("://", 1)[-1] != request.headers.get("host", ""):
+            return JSONResponse({"detail": "cross-origin request refused"}, status_code=403)
     resp = await call_next(request)
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+    resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Cache-Control"] = "no-store"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["Referrer-Policy"] = "no-referrer"
@@ -138,7 +169,7 @@ async def config():
             people.append({"name": p, "roles": me["roles"], "teams": me.get("teams", [])})
         except HTTPException:
             people.append({"name": p, "roles": [], "teams": [], "error": True})
-    return {"personas": people, "default": DEFAULT_PERSONA, "grafana": GRAFANA_URL, "openlit": OPENLIT_URL,
+    return {"personas": people, "default": DEFAULT_PERSONA, "demo": DEMO_MODE, "grafana": GRAFANA_URL, "openlit": OPENLIT_URL,
             "api_docs": API_DOCS_URL}
 
 
@@ -173,7 +204,7 @@ async def agents(request: Request):
 async def live(request: Request, ids: str = ""):
     """Live spend + workloads + recent audit activity for the agents that are on screen."""
     p = _persona(request)
-    wanted = [i for i in ids.split(",") if i][:40]
+    wanted = [_check_id(i) for i in ids.split(",") if i][:40]
     sem = asyncio.Semaphore(8)
 
     async def one(aid: str):
@@ -236,7 +267,8 @@ def _post(path: str, cp_path: str, with_body: bool = True):
     async def handler(request: Request):
         _cache.clear()
         body = await request.json() if with_body else None
-        return await cp(_persona(request), "POST", cp_path.format(**request.path_params), body=body)
+        path_params = {k: _check_id(v) for k, v in request.path_params.items()}
+        return await cp(_persona(request), "POST", cp_path.format(**path_params), body=body)
     app.post(path)(handler)
 
 
@@ -258,6 +290,8 @@ async def q_list(request: Request):
     acts.sort(key=lambda a: order.get(a["status"], 2))
     return {"actions": acts[:10]}
 
+
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

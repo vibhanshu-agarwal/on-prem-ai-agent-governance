@@ -47,7 +47,7 @@ const ago = ts => {
 };
 const hhmmss = ts => new Date(ts).toLocaleTimeString([], { hour12: false });
 const me = () => (state.cfg?.personas || []).find(p => p.name === state.persona) || { roles: [], teams: [] };
-const can = role => me().roles.includes(role) || me().roles.includes('admin');
+const can = role => !!state.cfg?.demo && (me().roles.includes(role) || me().roles.includes('admin'));
 
 /* ---------- dialog ---------- */
 function dialog(content) {
@@ -366,6 +366,8 @@ async function init() {
   let saved = null; try { saved = localStorage.getItem('persona'); } catch (e) { /* ignore */ }
   state.persona = state.cfg.personas.some(p => p.name === saved) ? saved : state.cfg.default;
   const sel = $('#persona');
+  $('#personaBox').hidden = !state.cfg.demo;
+  if (!state.cfg.demo) { $('#health').after(h('span', { class: 'pill', title: 'STATUS_DEMO_MODE is off: actions disabled' }, 'read-only')); }
   sel.replaceChildren(...state.cfg.personas.map(p => h('option', { value: p.name, selected: p.name === state.persona }, `${p.name} (${p.roles.filter(r => r !== 'admin').join(', ') || 'no roles'})`)));
   sel.onchange = () => { state.persona = sel.value; try { localStorage.setItem('persona', sel.value); } catch (e) { /* ignore */ }
     state.live = {}; $('#audit').replaceChildren(); state.lastSeq = 0; refreshAll(); refreshAudit(true); };

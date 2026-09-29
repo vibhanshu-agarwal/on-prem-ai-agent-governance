@@ -6,9 +6,7 @@
 <title>Agent Control Room</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b82f6'/%3E%3Cpath d='M16 6l9 4v6c0 5-4 8-9 10-5-2-9-5-9-10v-6z' fill='none' stroke='white' stroke-width='2.4' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/style.css">
-<script>
-  try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
-</script>
+<script src="/static/theme.js"></script>
 </head>
 <body>
 <header class="top">
@@ -19,8 +17,8 @@
   <div class="top-right">
     <span id="health" class="pill" title="Control plane API"><i class="dot"></i><span>connecting</span></span>
     <a id="grafana" class="btn ghost" target="_blank" rel="noopener">Cost dashboard &#8599;</a>
-    <label class="persona" title="The page acts as this person against the control-plane API. Roles come from the IdP.">
-      <span>Acting as</span>
+    <label class="persona" id="personaBox" hidden title="DEMO ONLY (STATUS_DEMO_MODE=1): the page acts as this person against the control-plane API. Roles come from the IdP. Never enable outside a demo.">
+      <span>DEMO: acting as</span>
       <select id="persona"></select>
     </label>
     <button id="theme" class="btn icon" aria-label="Toggle theme" title="Toggle light/dark">&#9680;</button>
