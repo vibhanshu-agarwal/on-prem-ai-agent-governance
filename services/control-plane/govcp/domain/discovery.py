@@ -53,10 +53,21 @@ class DiscoveryService:
             # suspected spoof with high priority (zero budget, no key, like every proposal).
             bound = (agent.labels or {}).get(WORKLOAD_IMAGE_LABEL)
             seen = {obs.image, (obs.evidence or {}).get("image"), (obs.evidence or {}).get("image_id")} - {None, ""}
-            if not bound or bound in seen:
+            # T8: a gateway-key observation (fingerprint "key:<token hash prefix>", no workload image) is
+            # not a workload, so the image binding cannot apply. Its agent_id comes from key metadata, which
+            # only an admin can write; it is folded as known only if that exact key is registered to the
+            # agent. A key that names a registered agent but is not in the register stays a (flagged) proposal.
+            if not seen and obs.fingerprint.startswith("key:"):
+                prefix = obs.fingerprint[4:]
+                if len(prefix) >= 12 and any(k.key_hash.startswith(prefix) for k in agent.gateway_keys):
+                    return {"status": "known", "agent_id": claimed, "fingerprint": obs.fingerprint,
+                            "binding": "key"}
+            elif not bound or bound in seen:
                 return {"status": "known", "agent_id": claimed, "fingerprint": obs.fingerprint,
                         "binding": "image" if bound else "unbound"}
             spoof = {"claimed_agent_id": claimed, "expected_image": bound, "seen_image": obs.image}
+            if not seen and obs.fingerprint.startswith("key:"):
+                spoof = {"claimed_agent_id": claimed, "reason": "gateway key names this agent but is not registered to it"}
         today = _day(time.time())
         counter = f"feedcount:{feed}:{today}"
         self.p.repo.insert(KV, counter, {"count": 0})

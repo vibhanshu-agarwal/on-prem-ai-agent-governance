@@ -73,3 +73,27 @@ def test_spoof_proposals_still_count_against_the_feed_cap(app):
 def test_unbound_agent_keeps_legacy_behaviour(app):
     r = app.discovery.submit("docker-events", _obs("x", "anything:1", "legacy-agent"))
     assert r["status"] == "known" and r["binding"] == "unbound"
+
+
+# ---- T8: gateway-key observations (gateway-logs feed, OTel spans) are not workloads -------------------------
+def _key_obs(key_hash, agent_id):
+    return DiscoveryObservation.from_dict({
+        "fingerprint": f"key:{key_hash[:16]}", "kind": "traffic", "name": "k", "image": None,
+        "labels": {"govpilot.agent_id": agent_id} if agent_id else {},
+        "evidence": {"source": "gateway-otel", "key_hash_prefix": key_hash[:12], "calls": 1}})
+
+
+def test_registered_agent_key_is_known_not_a_spoof(app):
+    """Regression (T8 integration): the image binding made every registered agent's own gateway key look
+    like a label spoof, so the queue filled with the agents themselves."""
+    for agent_id in ("hr-agent", "legacy-agent"):
+        key_hash = app.register.find(agent_id).gateway_keys[0].key_hash
+        r = app.discovery.submit("gateway-logs", _key_obs(key_hash, agent_id))
+        assert r["status"] == "known" and r["binding"] == "key", r
+    assert app.discovery.list() == []
+
+
+def test_unregistered_key_claiming_an_agent_is_flagged(app):
+    r = app.discovery.submit("gateway-logs", _key_obs("f" * 64, "hr-agent"))
+    assert r["status"] == "pending" and r["flags"] == ["label_spoof_suspected"] and r["budget_usd"] == 0
+    assert r["spoof"]["claimed_agent_id"] == "hr-agent"
