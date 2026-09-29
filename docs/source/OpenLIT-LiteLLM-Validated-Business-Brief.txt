@@ -1,0 +1,183 @@
+
+VALIDATED BUSINESS BRIEF
+Controlling, discovering, and containing rogue AI agents
+OpenLIT + LiteLLM on-prem proposal | Executive answers with optional technical detail
+Audience: Business owners, architecture, security, platform engineering
+Purpose: Close four questions from the architecture review meeting
+Status: Recommended amendments to the Claude follow-up response
+Validated: 22 August 2026 against current primary documentation
+Bottom line. Keep the hybrid direction, but correct the product boundaries. LiteLLM can stop new model access and enforce spend. OpenLIT can observe and discover active LLM-using services. The orchestrator, identity provider, network controls, and runtime security stack must stop processes and contain sandbox escapes. There is no single product-level kill switch.
+What changed after validation
+LiteLLM's current documentation says budget reservation is enabled by default and documents an optional fail-closed budget mode. The proposal should test native enforcement before committing to a separate ledger.
+OpenLIT Controller can discover Kubernetes, Docker, and Linux services that make LLM calls using eBPF. It is useful for shadow-agent detection, although it is not an authorization registry or a process kill switch.
+LiteLLM documents JWT/OIDC authentication, SCIM, and JWT-to-virtual-key mapping as Enterprise features. An OSS-only design must use per-agent virtual keys or an external/custom authentication layer.
+An A2A Agent Card describes an endpoint already known to the crawler or catalog. It is not a reliable organization-wide cold-start discovery mechanism on its own.
+OpenLIT and LiteLLM do not provide a documented atomic bulk shutdown of agent workloads. That action must coordinate gateway denial with the workload controller, network, identity, and secret stores.
+
+1. How do we turn off a rogue agent?
+Business answer. It is not just key-based. The key block is the fastest way to stop new model spend, but a real shutdown must also stop the running workload, revoke its other credentials, and prevent direct access around the gateway.
+The control should be identity-based: one governed agent identity maps to every credential, workload, tool permission, and runtime instance associated with that agent. The emergency action disables the identity and then executes the right revocation for each mapped handle.
+Recommended stop sequence
+Deny new model calls. Block every LiteLLM virtual key tied to the agent, or block the mapped team/identity boundary. LiteLLM documents /key/block and /team/block. [1]
+Stop the workload controller. Scale a Deployment to zero, suspend the Job or workflow, or terminate the VM/microVM. Deleting an individual pod is insufficient because Kubernetes may recreate it.
+Remove the agent's other powers. Revoke MCP/tool credentials, workload certificates, database tokens, queues, and outbound network access. LLM spend is only one part of the blast radius.
+Deal with work already in flight. Cancel provider or agent tasks where the specific API supports it, close tracked gateway connections, and bound residual exposure with output-token, iteration, and execution-time limits. LiteLLM does not document a universal cross-provider stream-abort API.
+Verify containment. Confirm that no fresh gateway requests, provider egress, tool calls, or replacement workloads appear after the action.
+What if the agent uses JWT, OIDC, or workload identity?
+The same agent-level Stop button can work, but the backend path changes. A self-contained JWT normally remains valid until expiry unless the verifier checks a denylist, introspection endpoint, or another live policy source. Short token lifetimes reduce exposure but are not an immediate kill switch.
+LiteLLM Enterprise option: map each stable JWT claim (for example client_id or sub) to its own virtual key, then disable the mapping or block the underlying key. The JWT, SCIM, and JWT-to-key features are documented as Enterprise. [3]
+OSS-first option: issue one virtual key per agent, or place an identity-aware proxy/custom authentication hook in front of LiteLLM that validates the external credential and resolves it to a governed user/team record and blocked status. Budget and model checks require the documented enforcement flags. [4]
+Workload-identity option: bind Kubernetes ServiceAccount, SPIFFE/mTLS identity, or equivalent to the registry; revoke or deny that identity and stop its workload through the orchestrator.
+Important limitation. Blocking a key prevents subsequent gateway requests. It does not prove that a provider request already accepted has stopped, and it does nothing if the agent holds a provider credential or can use an ungoverned network path.
+Budget enforcement correction
+Claude's follow-up correctly describes reserve-before-send behavior, but incorrectly treats it as necessarily custom. Current LiteLLM documentation says budget reservation is enabled by default: the proxy estimates maximum request cost, reserves it before provider dispatch, and reconciles to actual cost. It also documents fail_closed_budget_enforcement for a hard ceiling when Redis is unavailable or stale. [2]
+Recommendation: make native LiteLLM enforcement the pilot baseline and build a separate ledger only for gaps proven by acceptance tests - for example cross-deployment budgets, non-LLM tool spend, consolidated billing, unsupported route pricing, or enterprise audit semantics. Batch requests and routes without token pricing remain explicit exceptions in the LiteLLM documentation. [2]
+2. Can agent discovery scale beyond manual registration?
+Business answer. Yes. Reconcile three views: what was deployed, what identity was issued, and what actually called an LLM. Discovery may create a pending record automatically; only approval should create production access and budget.
+Recommended discovery model
+Deployment source of truth. Watch Kubernetes workloads and service accounts, or consume events from CI/CD, infrastructure-as-code, a CMDB, and the service catalog. Kubernetes supports list-and-watch change streams and admission controls, making this the best scalable source for managed environments. [8]
+Identity source of truth. Reconcile service accounts, workload certificates, IdP clients, LiteLLM keys, and owners. Every production identity must map to exactly one accountable owner and an approved workload selector.
+Passive traffic discovery. Use OpenLIT Controller and gateway/egress logs to find services making LLM calls. OpenLIT Controller now discovers Kubernetes, Docker, and Linux services through active LLM connections and exposes them on its Agents page. [6]
+Protocol metadata. Fetch an A2A Agent Card to learn capabilities, endpoints, and authentication after a host or service is known. The current A2A specification supports a well-known agent-card URI, registries/catalogs, and direct configuration. [7]
+Reconciliation queue. Merge all hits into one pending inventory. Unknown services start with no production budget, no approved model access, and a time-bound owner-assignment workflow.
+What each product actually does
+LiteLLM's Agent Gateway lets administrators add agents through the UI, configuration, or API and can publish registered agents for discovery. That is registration and cataloging, not automatic estate-wide discovery. [5]
+OpenLIT Controller provides the most useful passive feed for this proposal because it can discover active LLM-calling services without SDK changes. Its Enable/Disable controls manage observability instrumentation; Disable detaches probes or removes injected SDK configuration. It does not disable the business agent itself. [6]
+An MCP registry answers which MCP servers and tools exist. It should be reconciled with the agent registry, but it does not tell you which agent is running, who owns it, or which budget should apply.
+Recommended pilot scope. Use deployment events plus OpenLIT Controller passive discovery and a pending-approval queue. Add A2A card enrichment only for agents that already expose the protocol. Avoid subnet crawling as the primary design: it is noisy, incomplete, and starts from untrusted self-description.
+3. Can we find sandbox breakouts and stop agents en masse?
+Business answer. Yes, provided the organization controls the runtime and network. However, after a confirmed sandbox escape, the unit of containment is no longer just the agent - it may be the namespace, image, service account, host, or node.
+Detect with an independent signal
+OpenLIT traces and Controller telemetry are useful for LLM calls, tokens, cost, latency, and agent-framework spans. They are not a full runtime security sensor. Use a separate host/runtime security capability for unexpected child processes, privilege changes, namespace or kernel activity, filesystem writes, and network destinations. Correlate both planes using workload identity and time.
+The OpenLIT Controller itself is privileged infrastructure in common deployments: the published Docker example uses privileged mode, host PID visibility, BPF filesystems, and the Docker socket. That access should be tightly scoped, monitored, and separated from agent-admin authority. [6]
+Contain in the right order
+Deny centrally. Block selected identities at LiteLLM and revoke provider/tool credentials. Use selectors such as service account, owner, image digest, namespace, host, tool version, or incident group - not only a hand-entered list of agent IDs.
+Quarantine network paths. Apply an emergency deny through the service mesh, firewall, or CNI, while recognizing that Kubernetes NetworkPolicy behavior for already-established connections is implementation-defined. Test the chosen network stack. [9]
+Stop desired state. Scale controllers to zero or suspend jobs/workflows before deleting their pods or instances. Otherwise the orchestrator may recreate them.
+Escalate for a real escape. If host compromise is plausible, isolate the node from the network, preserve evidence, rotate every reachable secret, and rebuild or reimage. A pod deletion is not sufficient assurance.
+Confirm recovery. Do not restore from the same image, credentials, or policy until the root cause is understood and the affected selector set has been re-attested.
+Automation policy
+For the pilot, automate evidence gathering and a reversible quarantine, but require a human for destructive fleet termination except for pre-approved, unambiguous conditions. Automatic containment can be appropriate for a stolen credential, direct provider bypass, or a confirmed prohibited process; budget anomalies alone should usually throttle and page an owner before terminating business work.
+Isolation choice. Claude's container -&gt; gVisor -&gt; microVM direction is reasonable, but it should not be treated as a universal ranking. gVisor reduces host-kernel exposure with a user-space application kernel; Kata and Firecracker add hardware-virtualized boundaries. Compatibility, GPU access, observability, patching, and response procedures must be tested for the actual agent workload. [11][12][13]
+4. Other challenges and risks
+Business answer. The largest risk is not merely that an agent misbehaves. It is that the organization cannot reliably identify the agent, cannot force it through the governed path, or loses the control plane needed to stop it.
+Gateway bypass. If agents retain provider keys or unrestricted egress, LiteLLM budgets and key blocks are advisory. Provider credentials should exist only in the gateway or a brokered secret path.
+Feature and licensing mismatch. The proposal assumes OSS delivery but uses LiteLLM capabilities documented as Enterprise, notably JWT/OIDC, SCIM, and JWT-to-key mapping. This is a commercial and architecture decision, not a later configuration detail. [3]
+Gateway compromise. The gateway is Tier-0 because it can reach provider credentials, budgets, logs, and downstream services. CVE-2026-42271 was added to CISA's Known Exploited Vulnerabilities catalog; the direct LiteLLM flaw required a valid proxy key and was fixed in 1.83.7. The follow-up's description as simply unauthenticated was too broad. [14]
+Security and version drift. A fixed minimum version is not a long-term control. Pin an approved image digest, produce an SBOM, monitor advisories, restrict admin/test routes, and revalidate after upgrades.
+Kill-plane dependency. The emergency deny path must remain available if the main dashboard, OpenLIT, or ordinary control-plane workflow is down. Keep a separately authenticated, audited operational path.
+Identity spoofing and delegation. Do not trust a caller-supplied agent_id header by itself. Bind identity to the authenticated key, token claim, certificate, or service account. Sub-agents should inherit narrower permissions and budget, never broader ones.
+Restart and persistence. Killing a process without changing desired state allows Deployments, schedulers, or supervisors to restart it. A confirmed escape may also leave persistence outside the original sandbox.
+Cost blind spots. LLM tokens are only part of agent cost. Tools, search, SaaS APIs, storage, local GPU time, retries, batch jobs, and delegated agents require separate controls or allocation.
+Privacy in evidence. OpenLIT content capture and deep agent traces can expose prompts, outputs, credentials, or regulated data. Apply redaction, least retention, role-based access, and explicit data-classification rules.
+False positives and business interruption. Bulk containment can stop legitimate critical work. Use confidence tiers, blast-radius previews, approvals, and reversible quarantine before destructive cleanup.
+Evidence that should not be repeated as fact
+Claude's precise market statistics about how many organizations cannot terminate agents, cannot isolate them, or fail to track AI identities came from vendor or secondary commentary in the supplied follow-up. Those numbers are not needed to justify the controls and should be removed from a business-owner response unless the original survey methodology and sample are reviewed.
+Technical validation of Claude's main assumptions
+Identity-based shutdown rather than credential-based shutdown
+VALIDATED. This is the right architecture. The registry must bind agent identity to keys, token claims, workload identity, runtime selectors, tool credentials, and owner. The implementation is composite, not a single native endpoint.
+LiteLLM key and team blocking provide immediate control
+VALIDATED WITH CAVEAT. The documented /key/block and /team/block endpoints stop subsequent gateway admissions. They do not prove termination of an already accepted provider call, the agent process, or a path that bypasses LiteLLM. [1]
+JWT/OIDC, SCIM, and JWT-to-key auto-registration are available
+CORRECTION REQUIRED. They are available, but the current LiteLLM documentation labels JWT authentication, SCIM, and JWT-to-virtual-key mapping as Enterprise features. The OSS plan needs an alternate identity path or a commercial license. [3]
+A custom synchronous spend ledger is non-negotiable
+MODIFY. LiteLLM now documents native budget reservation, cross-pod Redis counters, database reconciliation, and an optional fail-closed budget mode. Validate those controls first. Keep custom ledger work only for unmet scope, semantics, reconciliation, or non-LLM cost requirements. [2]
+OpenLIT is only application-level telemetry
+OUTDATED. OpenLIT now documents a Controller that passively discovers active LLM-calling services and observes traffic with eBPF, plus optional Python SDK injection. It still is not a general runtime-security or process-termination system. [6]
+A2A Agent Cards can support discovery
+VALIDATED WITH CAVEAT. Agent Cards are standard metadata at a well-known path and can be found through catalogs or direct configuration. They require a known domain, endpoint, or registry and should enrich an authoritative inventory rather than authorize a newly found agent. [7]
+An MCP registry is not an agent registry
+VALIDATED. It catalogs callable servers and tools. Agent identity, ownership, runtime location, spend boundary, and kill handles remain separate governance data.
+Network quarantine can be the fastest containment step
+VALIDATED WITH CAVEAT. It is an important parallel action, but Kubernetes explicitly leaves the effect of a new NetworkPolicy on existing connections to the network implementation. Gateway denial, workload stop, and tested network controls must work together. [9]
+Bulk kill can be implemented as a LiteLLM/OpenLIT feature
+DESIGN PROPOSAL, NOT NATIVE CAPABILITY. The supplied answer describes a useful custom control-plane action. The current product documentation does not establish a universal atomic API that disables identity, aborts all model streams, revokes tools, stops workloads, and quarantines hosts.
+LiteLLM's 2026 exploitation history should affect the design
+VALIDATED. Yes. Treat the gateway and its admin/test surfaces as Tier-0, isolate them from agents, pin and verify releases, and maintain a rapid advisory response. Use exact CVE facts rather than broader vendor-blog wording. [14][15]
+Recommended operating model
+Who owns which control
+The central design principle is separation of duties: each platform does one job well, and the emergency action coordinates them.
+Layer
+Business responsibility
+Primary role
+Control plane / registry
+Decides whether the agent is approved, disabled, or quarantined; stores owner and all revocation handles.
+Custom product layer
+LiteLLM gateway
+Stops new model requests, enforces budgets and rate limits, and records gateway-level identity and spend.
+Model-access enforcement
+OpenLIT
+Discovers active LLM-calling services and supplies traces, cost evidence, and investigation context.
+Evidence and passive discovery
+Runtime security
+Detects suspicious process, file, privilege, and network behavior outside the application trace.
+Breakout detection
+Orchestrator, mesh, IdP
+Stops compute, blocks egress, revokes workload identity, and contains affected hosts or nodes.
+Actual containment
+Minimum fields to add to the agent registry
+Stable agent identity and accountable owner
+Authentication mode and credential-revocation handles
+LiteLLM key, team, user, or mapped identity boundary
+Runtime selectors: cluster, namespace, controller, image digest, host or node
+Tool, MCP, database, queue, and SaaS credential set
+Allowed egress destinations and provider path
+Isolation tier and breakout response group
+Status: pending, approved, throttled, quarantined, disabled, retired
+Target stop time and last successful stop drill
+Discovery source, attestation status, and last-seen time
+OSS-first versus LiteLLM Enterprise
+OSS-first is viable for the pilot if every agent receives a unique LiteLLM virtual key or if the organization accepts owning an external/custom authentication mapping. It minimizes license dependency but adds identity integration and operational responsibility.
+LiteLLM Enterprise is the cleaner route when corporate OIDC/JWT, SCIM lifecycle, and per-client JWT-to-key mapping are required. It reduces custom identity plumbing but adds commercial licensing, version support, and vendor-dependency decisions.
+Pilot recommendation. Choose the identity route before Week 1. If JWT-authenticated agents are in scope, explicitly fund LiteLLM Enterprise or approve an OSS custom-auth design. Do not build an OSS commercial plan that silently depends on Enterprise behavior.
+Minimum pilot acceptance tests
+These tests turn the proposal from a slideware control into an operational capability. Targets should be agreed with the customer; the times below are recommended starting points, not vendor guarantees.
+Test
+Pass condition
+Owner
+Single-agent stop
+New LiteLLM requests are denied within the agreed emergency target (recommend 30 seconds or less).
+Platform
+Authenticated-agent stop
+A JWT, certificate, or service-account based agent is stopped without waiting for token expiry.
+Identity
+In-flight behavior
+Each provider's stream/cancel behavior is measured; residual spend is bounded by output and time limits.
+Platform
+No bypass
+Agents cannot reach approved model providers directly and do not hold provider master credentials.
+Network/Security
+Shadow discovery
+A deliberately unregistered service making an LLM call appears in the discovery queue and has no production budget.
+Observability
+Bulk quarantine
+All workloads selected by image, service account, namespace, owner, or node are denied, stopped, and do not restart.
+SRE
+Host compromise drill
+A simulated escape triggers node isolation, evidence preservation, secret rotation, and rebuild procedures.
+Security/SRE
+Kill-plane outage
+Emergency denial remains available when the main dashboard or evidence store is unavailable.
+Architecture
+Suggested meeting-ready response
+We can shut down a rogue agent, but the shutdown is not a single API key operation. The gateway stops new model spend; the runtime platform stops the process; identity and network controls remove its other access. All of those actions need to be tied to one governed agent identity.
+Discovery can scale by combining deployment records, workload identities, gateway logs, and OpenLIT's new passive service discovery. A2A cards can describe known agents, but a discovered agent should enter a pending queue with no production budget until an owner approves it.
+If an agent merely runs away inside its sandbox, we can block it at the gateway and stop its workload. If it escapes the sandbox, we contain the larger trust boundary - potentially the whole node - rotate reachable credentials, preserve evidence, and rebuild. Bulk containment should be selectable by service account, image, namespace, host, or incident group, not only by agent name.
+The proposal remains viable, with four conditions: all model traffic must be forced through the gateway; the OSS-versus-Enterprise identity choice must be explicit; the emergency stop path must be tested end-to-end; and the gateway plus the privileged OpenLIT Controller must be treated as high-value infrastructure, not ordinary application components.
+Sources
+[1] LiteLLM - Virtual Keys (including key block/unblock)
+[2] LiteLLM - Budgets and Rate Limits (budget reservation and fail-closed enforcement)
+[3] LiteLLM - Provisioning identities and issuing keys (Enterprise feature boundaries)
+[4] LiteLLM - Custom Auth
+[5] LiteLLM - Agent Gateway (A2A Protocol)
+[6] OpenLIT - Controller overview
+[7] A2A Protocol - Agent discovery and Agent Card specification
+[8] Kubernetes - API concepts: list and watch
+[9] Kubernetes - NetworkPolicy behavior, including existing connections
+[10] Kubernetes - Pod lifecycle and forced termination caveats
+[11] gVisor - Security architecture
+[12] Kata Containers - Project and isolation overview
+[13] Firecracker - microVM security and isolation overview
+[14] NVD - CVE-2026-42271 (LiteLLM command injection and CISA KEV entry)
+[15] GitHub Advisory - CVE-2026-47101 (LiteLLM privilege escalation)
+Validation note: product documentation and security status change quickly. Re-check feature licensing, exact version behavior, and current advisories when the pilot image is selected.

@@ -1,0 +1,179 @@
+--- ppt/slides/slide1.xml ---
+
+    ON-PREM AI GOVERNANCE
+Controlling AI Cost, Risk, and Agent Sprawl
+A control plane for enterprise AI spend, security, and accountability — built on LiteLLM and OpenLIT
+Executive Briefing  |  Prepared for CXO Review  |  July 2026
+
+--- ppt/slides/slide2.xml ---
+
+THE PROBLEM
+AI spend is scaling faster than AI control
+    No hard cost ceiling
+Agents can call multiple providers with no enforced per-run or per-agent dollar cap.
+    No unified visibility
+Spend, tokens, and risk are scattered across providers, teams, and dashboards.
+    No lifecycle control
+There is no reliable, fast way to disable a misbehaving or unauthorized agent.
+    No audit trail
+Security and compliance teams cannot show who changed what policy, and when.
+Bottom line: without a governance layer, AI adoption creates unmanaged financial and security exposure.
+
+--- ppt/slides/slide3.xml ---
+
+WHY NOW
+Enterprises are scaling AI faster than they can govern it
+62%
+of respondents are experimenting with AI agents
+McKinsey, State of AI 2025
+69%
+expect full governance to take a year or more
+Deloitte, State of Gen AI 2025
+78%
+plan to increase AI investment further
+Deloitte, State of Gen AI 2025
+The gap between experimentation and governed, cost-controlled production is the opportunity.
+
+--- ppt/slides/slide4.xml ---
+
+THE SOLUTION
+A three-layer control plane, not a single tool
+Best-of-breed open source for the plumbing; a custom layer for the business logic that makes it defensible.
+    Data Plane
+LiteLLM (open source)
+Routes requests to any model provider, enforces guardrails and rate limits, retries and falls back automatically.
+    Control Plane
+Custom-built (the product)
+Owns agent identity, budgets, enable/disable, RBAC, approvals, and policy — the layer that is actually defensible.
+    Evidence Plane
+OpenLIT (open source)
+Captures traces, token usage, cost, and evaluations for every request, for audit and optimization.
+Key insight: the gateway is commoditized. The control plane — budgets, identity, audit — is what CXOs are actually buying.
+
+--- ppt/slides/slide5.xml ---
+
+GOVERNANCE MODEL
+Every AI action is identified, budgeted, and audited
+    Agent identity
+Every agent has an owner, an approved model list, and a trusted, gateway-verified identity — never a self-reported name.
+    Hard budget caps
+Daily, monthly, and per-run dollar limits, reserved before the request is sent — not reconciled after the fact.
+    Real-time enable / disable
+Any agent can be suspended on demand, blocking new requests within an agreed operational window.
+    Full audit trail
+Every policy change is logged with who, what, when, and the ability to roll back.
+This is the data model that turns a demo into an auditable enterprise system.
+
+--- ppt/slides/slide6.xml ---
+
+WHY THIS, NOT JUST OPEN SOURCE
+A reskinned gateway is not a defensible product
+Capability
+Open-source gateway alone
+This solution
+Provider routing &amp; fallback
+Yes
+Yes
+Hard per-run dollar cap
+Partial — spend logged after the fact
+Yes — reserved before the call
+Agent lifecycle &amp; ownership
+No
+Yes
+Enterprise audit &amp; rollback
+No
+Yes
+On-prem / air-gapped fit
+Yes — self-managed only
+Yes — designed for it
+Cloud invoice reconciliation
+No
+Roadmap add-on
+Differentiation: trusted agent identity, hard budget enforcement, on-prem fit, and auditability — not the routing layer itself.
+
+--- ppt/slides/slide7.xml ---
+
+RISK CHECK
+Licensing is favorable — with two guardrails
+    Clear to build
+OpenLIT: Apache 2.0 — commercial use, modification, and proprietary wrapping permitted
+LiteLLM: MIT outside its Enterprise directory — same freedoms apply
+No license-based request or rate caps in either project
+Both allow full on-prem, air-gapped distribution
+    Two guardrails to manage
+Do not copy or distribute LiteLLM's Enterprise-only source or rely on its Enterprise features without a commercial license.
+Preserve license, copyright, and NOTICE files for both projects; generate an SBOM for the full dependency tree.
+Pin exact OSS versions before implementation begins, and review provider API terms separately from open-source licensing.
+
+--- ppt/slides/slide8.xml ---
+
+DELIVERY PLAN
+A supervised pilot: Week 0 gate + four delivery weeks
+Week 1
+Ledger first
+Build &amp; load-test the synchronous spend ledger; streaming ceilings, LiteLLM wrapper, first provider and agent adapter.
+Week 2
+Governance core
+Trusted identity, enable/disable, Git policy-as-code, model allowlists, minimal guardrails. Midpoint go/no-go.
+Week 3
+Visibility
+OpenLIT/Grafana cost evidence, thin agent-status page, reconciliation, latency measurement, security tests.
+Week 4
+Prove it
+Concurrency, streaming, outage &amp; rollback tests; backup/restore; SBOM &amp; notices; customer acceptance.
+    Team required: 3–5 engineers (platform/ledger, agent adapters, observability, DevOps/SRE, part-time security). Scope: one customer, one environment, 3 agents, one local + one approved remote provider — Week 0 gate precedes the clock.
+
+--- ppt/slides/slide9.xml ---
+
+SUCCESS BAR
+Pilot success is measured — and scope cuts are pre-agreed
+5
+Days of live traffic
+Five consecutive business days of supervised traffic, at least 1,000 requests.
+0
+Cap overshoots
+Zero hard-cap overshoots under concurrency, retries, fallbacks, and streaming.
+p95
+Latency budget met
+Gateway overhead within the p95/p99 budget agreed at the Week 0 gate.
+0
+Sev-1 incidents
+No unresolved severity-1 security incident during the pilot window.
+1–5
+Descope order
+Dashboard, approval UI, guardrail breadth, providers, agent count — cut in that order.
+Protected core — never descoped: synchronous budget enforcement, trusted identity, fail-closed semantics, audit, and agent correlation.
+
+--- ppt/slides/slide10.xml ---
+
+DECISIONS NEEDED
+Five decision areas close the Week 0 gate
+1
+Deployment target
+Kubernetes, Docker, air-gapped, or restricted-egress environment.
+2
+Workload &amp; SLO
+Peak concurrency, prompt/output sizes, streaming usage, and the p95 overhead budget.
+3
+Providers &amp; data risk
+Approved providers, data classifications, prompt egress permission, break-glass policy.
+4
+Identity &amp; agents
+OIDC / reverse proxy, RBAC roles, and named agent owners for run-ID integration.
+5
+Guardrails &amp; release
+Guardrail engine selection, Git policy repo, SBOM owner, and pilot acceptance criteria.
+Go/no-go rule: the four-week clock starts only after the Week 0 gate is signed off. If ledger, agent correlation, or latency targets are not shown by end of Week 2, replan as 6–8 weeks.
+
+--- ppt/slides/slide11.xml ---
+
+RECOMMENDATION
+Proceed with a scoped pilot, positioned as a control plane
+    Build on LiteLLM + OpenLIT, but sell and price the custom control plane — agent identity, hard budgets, and audit — as the product.
+    Timeline
+Week 0 gate + four-week supervised pilot; full platform is a phased follow-on.
+    Pilot posture
+Fail-closed, no HA/DR, business-hours SLA. Licensing manageable: pin versions, avoid Enterprise-only code.
+    Ask
+Week 0 gate decisions from the customer — before the delivery clock starts.
+Next step: confirm sponsorship and schedule the Week 0 requirements freeze.

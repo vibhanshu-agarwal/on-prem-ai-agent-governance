@@ -1,0 +1,267 @@
+GOVERNING AI AGENTS ON-PREMISES
+Stopping rogue agents, discovering them at scale, and containing breakouts
+Consolidated and validated answers to the four open questions from the architecture review
+Prepared for: Senior management, platform administrators, and IT security
+Date: 26 August 2026 (revision 2)    Status: Validated against primary documentation and security advisories
+Consolidates: the follow-up response of 22 August 2026 and the validated business brief of 22 August 2026; companion to the On-Prem AI Gateway and Agent Governance report of 25 July 2026 (LiteLLM + OpenLIT + custom control plane). This revision of 26 August 2026 folds in the validated findings of two independent critiques dated 25 August 2026 — an adversarial critical read and a solution-feasibility review — commissioned in response to stakeholder questions on security and agent discoverability.
+How to read this report
+Each of the four questions is answered in three layers: a plain-English answer first, the mechanics behind it second, and the decisions or funding it requires third. Business readers can stop after the first layer of each section. Sections 6 to 8 carry the material that makes this document authoritative: where the two earlier AI-assisted reviews disagreed, what checking the primary sources showed, and the acceptance tests that turn each answer from a claim into a demonstrated capability.
+Bottom line up front: all four questions have workable answers within the architecture already recommended. Nothing here requires abandoning the LiteLLM + OpenLIT + custom control plane design. But there is no single product-level &quot;kill switch&quot; to buy — the emergency stop is something we design across four systems we already plan to operate, and it must be tested, not assumed. The independent feasibility review concurs, and adds the sizing executives should hear: this is a multi-system integration project spanning four separately owned systems — months of platform engineering, not a configuration exercise or a licensing purchase.
+
+The five terms this report uses
+Only five pieces of vocabulary are needed to follow everything below.
+Term
+What it means in this design
+Gateway (LiteLLM)
+The single doorway all AI model traffic must pass through. It checks who is calling, enforces budgets and rate limits, and can refuse a request before any money is spent.
+Virtual key
+A credential the gateway issues to each agent — like a badge. A badge can be deactivated instantly, which stops all new model calls made with it.
+Observability (OpenLIT)
+The camera system. It records what every agent did, what it cost, and — through its newer Controller component — can also spot services making AI calls that nobody registered.
+Control plane (custom)
+The layer we build: the register of every approved agent, who owns it, what it may spend, and the emergency-stop actions. This is the product.
+Sandbox
+The isolated compute environment an agent runs in, so that a misbehaving agent cannot touch anything beyond its own workspace. Isolation strength is a choice, and it determines what &quot;kill&quot; means.
+
+Executive summary: the four questions, answered
+1. Can we switch off a rogue agent that is devouring the budget? Yes — within seconds for new spending. But the switch is an identity, not just a key. Deactivating the agent’s gateway credential stops new model calls immediately; a complete shutdown also stops the running program and revokes the agent’s other access (tools, databases, network). This works the same whether the agent uses a simple key or corporate single sign-on, provided one licensing decision is made up front (Section 2). One caveat the critical read added: ceilings bound what an agent’s final in-flight window can cost, not what it can do — so the stop sequence now includes tearing down live connections, and in-window harm has its own acceptance test (Section 8).
+2. Can agent discovery scale beyond registering each agent by hand? Yes. Manual registration stays as the approval step, but finding agents becomes automatic: deployment records, identity systems, and network-level observation each feed a pending queue. The rule that keeps this safe is simple — discovery proposes, humans approve, and a discovered agent has zero budget until approved (Section 3).
+3. Can we detect agents that break out of their sandbox and stop them en masse? Yes, with two additions to the design: an independent watchdog at the infrastructure level (a compromised agent cannot be trusted to report on itself), and a bulk quarantine action that selects agents by group — team, software version, host — rather than one at a time. After a confirmed escape, the unit of containment is bigger than the agent: possibly the whole host (Section 4).
+4. What other challenges should we plan for? The five that matter most: agents bypassing the gateway (which would make every control advisory); the gateway itself being attacked — a real, actively exploited risk in 2026, now patched; an agent subverted by prompt injection, which misbehaves entirely within its authorized scope and is invisible to spend- and breakout-based detection; a licensing mismatch between our open-source plan and features that require a commercial license; and the emergency stop being unavailable exactly when it is needed. All are manageable; all need explicit decisions (Section 5).
+2. Turning off a rogue agent
+The answer for the business
+It is not just key-based — and it should not be. Deactivating an agent’s gateway key is the fastest lever and stops new model spending within seconds. But a rogue agent is a running program: if only its key is blocked, the program keeps running, keeps retrying, and keeps whatever other access it has (tools, databases, file shares, network). A real shutdown therefore acts on the agent’s identity — one entry in our register that links together everything the agent holds: its keys, its login credentials, its running workloads, and its permissions. One decision (&quot;disable this agent&quot;) then triggers the right revocation for each of those handles.
+This is the single most important design point in this report, because it also answers the authentication question: it makes no difference whether the agent signs in with a static key, corporate single sign-on (JWT/OIDC), or an infrastructure certificate. The emergency stop is built on the identity that any of those credentials resolves to — not on the credential type.
+The stop sequence (what actually happens, in order)
+Deny new model calls. The gateway blocks every key tied to the agent. LiteLLM documents key-level and team-level blocking (/key/block, /team/block) in its open-source version; a team block cuts off every key issued under that team in one call. Effect: no new AI spend, within seconds. Blocking acts when the next request arrives, so it is coupled with active teardown of the agent’s established gateway connections — aborting streams and long-running requests — rather than letting a multi-minute agentic loop keep drawing on a response already in flight.
+Stop the running workload. The compute platform (typically Kubernetes) scales the agent’s deployment to zero or suspends its job. Deleting a single running instance is not enough — the platform would simply restart it. The desired state must change, not just the running copy.
+Revoke everything else the agent holds. Tool and MCP credentials, database tokens, workload certificates, queue access, and outbound network permissions. Model spend is only one part of the blast radius.
+Bound the work already in flight. A blocked key stops the next request; it does not recall a response already streaming back. Damage per request is capped in advance by output-token ceilings, iteration limits, and execution-time limits — so even the last request a rogue agent gets through has a known maximum cost. Cost is not harm, though: in that same window the agent can still act — send a message, call an external API, write to a database. In-window actions are treated as their own problem: connection teardown above, credential revocation next, and a dedicated acceptance test (Section 8).
+Verify containment. Confirm no fresh gateway requests, no direct traffic to model providers, no tool calls, and no replacement workloads appear. A stop that is not verified is a hope, not a control.
+Agents that use authentication (SSO / JWT / OIDC)
+A signed login token is checked cryptographically, not looked up in a table — so it stays valid until it expires, and there is nothing to &quot;delete&quot; server-side by default. Three measures close this gap, in order of preference:
+Map every token to a blockable key. LiteLLM can map each authenticated caller to its own virtual key at first use; the key then becomes the single object we block, regardless of how the caller signed in. This should be mandatory policy, not an optional setting.
+Keep tokens short-lived. Tokens valid for minutes, not hours, so an unrevoked token ages out quickly. This bounds exposure; it is a backstop, not the mechanism.
+Fall back to team or role revocation at the identity provider where mapping is not in place — coarser, because it affects everyone sharing that team or role.
+Decision required before Week 1: licensing
+Validation confirmed that LiteLLM documents JWT/OIDC authentication as an Enterprise (commercially licensed) feature, with JWT-to-key mapping in Enterprise beta and SCIM identity provisioning likewise positioned in the Enterprise tier. Key-level and team-level blocking are open source.
+If authenticated (SSO) agents are in scope, the organization must either fund a LiteLLM Enterprise license or approve building a small custom authentication layer in front of the open-source gateway (validating the corporate credential and resolving it to a per-agent key). Both are viable. What is not viable is an open-source plan that silently depends on Enterprise behavior — this is a commercial decision, not a configuration detail.
+Budget enforcement: better news than the earlier review assumed
+The earlier follow-up treated hard budget enforcement — reserving the estimated cost of a request before it is sent, so concurrent traffic cannot overshoot a cap — as custom machinery we must build. Validation against current LiteLLM documentation shows this is now largely native: budget reservation is enabled by default (the proxy estimates the maximum request cost, reserves it against the applicable budget, rejects the request if the reservation would exceed the cap, and reconciles to actual cost afterwards), and an optional fail-closed mode (fail_closed_budget_enforcement) validates every budgeted request against the authoritative database when the fast cache is degraded.
+The pilot should therefore test native enforcement first and build custom ledger components only where acceptance tests prove gaps. The documentation itself names the known gaps: batch jobs (whose full cost cannot be estimated at submission) and routes without token pricing (some image and audio routes) fall back to enforcement on recorded spend. Cross-team cumulative budgets, non-LLM costs, and consolidated billing remain candidates for the custom layer.
+Honest limits to state in any presentation
+Blocking stops the next request in seconds; it does not recall a request already accepted by a model provider. Pre-set ceilings bound that residual cost.
+Ceilings bound residual cost, not residual harm. What a blocked agent can still do in its final window is limited only by its remaining tool and network access — which is why credential revocation and connection teardown are part of the stop itself, and why in-window harm is drilled separately from spend (Section 8).
+Every control above assumes agents can only reach model providers through the gateway. An agent holding a provider key directly, or with unrestricted internet egress, is outside these controls entirely — Section 5 treats this as the number-one risk.
+The industry-standard target worth adopting: a specific agent can be fully stopped — gateway, workload, and credentials — in under a minute, demonstrated by a drill, with the stop time measured (Section 8).
+3. Agent discovery that scales beyond manual registration
+The answer for the business
+Yes, discovery can scale — by separating two things that the current process bundles together. Finding agents becomes automatic; approving them stays human. Every discovery mechanism feeds one pending queue, and nothing in that queue can spend a rupee until an owner is assigned and an approval is recorded. That single rule is what lets discovery scale to a large organization without becoming a bypass of governance.
+Scalable discovery means reconciling three views of the estate that already exist: what was deployed (the compute platform knows), what identity was issued (the identity systems know), and what is actually calling AI models (the network knows). An agent that appears in the third view but not the first two is precisely the &quot;shadow agent&quot; the question is about — and it is detectable.
+The discovery feeds, compared
+Feed
+What it finds
+Effort
+Role
+Deployment records (Kubernetes watch, CI/CD, service catalog)
+Every new workload and service account as it is created
+Low in managed environments
+Primary source of truth for what is running
+Identity systems (IdP clients, service accounts, certificates, gateway keys)
+Every credential issued, and to whom
+Low if IdP integration exists
+Maps each agent to one accountable owner
+Passive network observation (OpenLIT Controller, gateway and egress logs)
+Services actually making AI calls — registered or not
+Low; no agent cooperation needed
+The catch-all that finds shadow agents
+Agent self-description (A2A &quot;agent cards&quot;, MCP registries)
+Capabilities and endpoints of agents already known
+Medium
+Enrichment of known agents — not cold-start discovery
+Validation upgraded one important fact here: the earlier follow-up described OpenLIT as application-level telemetry only. That is outdated. OpenLIT now documents a Controller that passively discovers services making AI calls across Kubernetes, Docker, and Linux — using network-level inspection (eBPF), with no code changes in the agents — and lists them on an inventory page. This is the strongest low-cost shadow-agent detector available to this design, and it is already part of the chosen stack. Two caveats keep the claim precise: its enable/disable buttons control monitoring, not the agent itself — it is a discovery tool, not a kill switch — and it runs with privileged infrastructure access, so it must itself be protected like sensitive infrastructure. A third caveat, from the feasibility review: passive discovery is not all-seeing. eBPF-based capture reads traffic at the TLS-library boundary inside the workload, so ordinary encrypted calls to known providers are visible — but workloads using uncommon or statically linked TLS stacks can evade it, and consumption of non-LLM paid services (search APIs, vector databases, code-interpreter environments) is outside its view entirely. Discovery is detection; the enforcement backstop is the egress allowlist (Section 5).
+Two things discovery is not: an A2A agent card is a self-description published by an agent at a known address — useful for enriching an inventory, but it requires already knowing where to look and starts from untrusted self-description, so it cannot be the primary mechanism. And an MCP/tool registry catalogs what tools exist to be called — a worthwhile inventory, but it does not tell you which agent is running, who owns it, or what budget applies. Neither replaces the agent register.
+What to build for the pilot
+Deployment events plus the OpenLIT Controller feed plus one pending-approval queue. Full estate-wide crawling and registry federation are legitimate later phases, not pilot deliverables. Two safeguards from day one: rate-limit how many pending proposals any single feed can generate per day (so a noisy or compromised feed cannot flood the approval queue into rubber-stamping), and require stronger evidence for auto-proposed entries than for manually initiated ones. A third safeguard addresses how approval gates actually fail at scale — fatigue: set an approval SLA, sample-audit a fraction of approved entries each month, and pre-screen proposals automatically so approvers see enriched candidates (probable owner, deployment record, first-seen traffic) rather than raw noise. A gate that has degraded into rubber-stamping is discovery without governance.
+4. Detecting sandbox breakouts and stopping agents en masse
+The answer for the business
+Yes — provided the organization controls the runtime and the network, which an on-premises deployment does. Two principles shape the design. First, detection cannot rely on the agent’s own reporting: a genuinely compromised agent will not keep honestly telling the monitoring system what it is doing, so the watchdog must sit outside the agent, at the infrastructure level. Second, detection and mass termination are separate capabilities with different failure modes — and after a confirmed escape, the unit of containment is no longer the agent but whatever it may have touched: the namespace, the software image, the host, possibly the whole node.
+Detection: two independent witness planes
+The observability layer (OpenLIT) sees the application view: every AI call, its cost, tokens, and timing. A second, independent layer at the host or kernel level (runtime security tooling, e.g. eBPF-based) watches for the things an escaping agent cannot hide: unexpected outbound network destinations, unexpected child processes, privilege changes, and file writes outside the declared workspace. A spend spike that does not match the gateway’s reservation pattern is itself a breakout signal, connecting this section back to Section 2. The design item worth scoping explicitly is the correlation of the two planes — matching an application-level anomaly to a host-level one by workload identity and time — rather than trusting either alone. The critical read adds one hard case the design must own: after a true host compromise, a watchdog running on that host is inside the attacker’s reach too. Watchdog evidence therefore streams off-host in real time, so history cannot be silently rewritten; the watchdog emits a heartbeat whose absence is itself an alert; and a confirmed host escape downgrades trust in everything that host reported after the escape window opened.
+One protective note from validation: the OpenLIT Controller that provides passive discovery runs with privileged infrastructure access (host-level visibility). It is part of the security solution but is itself high-value infrastructure — its access should be tightly scoped, monitored, and kept separate from agent-administration authority. Concretely: its own service identity with least-privilege RBAC, no credentials shared with the control plane, its configuration under change control, and its activity monitored like any other top-tier component.
+What &quot;kill&quot; means depends on the sandbox tier
+Isolation tier
+Right for
+What a kill is
+Plain container (shared kernel)
+Agents with no shell or code execution; weakest isolation — a breakout is one kernel exploit away
+Platform eviction plus process termination
+gVisor (user-space syscall filter)
+Agents that call tools but never run arbitrary or model-generated code
+Process termination within the sandbox runtime
+MicroVM — Firecracker / Kata (own virtualized kernel)
+Any agent executing model-generated code or shell commands — exactly the class most likely to be involved in a rogue-agent incident
+Tear down the whole virtual machine in one action, destroying all compromised state at once
+Both earlier reviews agree on this ladder; the validated caveat is that it is a starting policy, not a universal ranking — compatibility, GPU access, and operations must be tested against the actual agent workloads before the tier is fixed. One enforcement gap is closed on critique: the tier rule must be admission-controlled, not aspirational. A policy-as-code gate at deployment rejects any agent whose declared capability (for example, executes model-generated code) does not match the sandbox tier it is being deployed into — without that gate, the ladder is a convention someone will eventually skip under deadline pressure.
+The mass-kill action: designed, not bought
+Validation confirmed what both reviews suspected: no current product offers a documented, atomic &quot;kill all these agents&quot; API. The bulk action is a control-plane feature we design, coordinating four systems in parallel:
+Select by group, not by name. The action must accept selectors — every agent of a team, every agent built on a poisoned tool version, every agent on a suspect host — because during an incident nobody has time to type a list of agent IDs.
+Gateway first (seconds). Mark all selected agents disabled and block their keys: new spend stops immediately, in-flight work is bounded by the pre-set ceilings.
+Network quarantine in parallel (seconds). Emergency deny rules via the service mesh, firewall, or network policy. One tested caveat: Kubernetes leaves the effect of a new network policy on already-established connections to the specific network implementation — so the chosen stack must be tested, not assumed. Treat this as a live hole until proven otherwise: on some implementations a connection opened before quarantine — exactly what an exfiltration stream or reverse shell is — keeps flowing until connection state is explicitly flushed. Quarantine therefore includes actively terminating established connections, and Section 8 now tests precisely that.
+Stop desired state, then instances (seconds to a minute). Scale controllers to zero or suspend jobs before removing instances, so the platform does not helpfully restart what was just killed; then tear down sandboxes per the tier above.
+Escalate for a true escape. If host compromise is plausible: isolate the node, preserve evidence, rotate every secret it could reach, and rebuild from a clean image. A deleted process is not assurance.
+Automation policy — the position to defend in the meeting
+For the pilot, automate detection, evidence-gathering, and reversible quarantine; keep a human decision on destructive fleet-wide termination. A false positive that kills legitimate business work mid-task is a real cost, and current industry practice pairs high-confidence detection with human-triggered action. Pre-approved automatic containment is reasonable for a narrow set of unambiguous conditions (stolen credential, direct provider bypass, confirmed prohibited process). Promote to broader autonomy only after the pilot demonstrates an acceptably low false-positive rate.
+An honest gap to acknowledge: fleet-wide bulk termination is underbuilt across the entire industry, not just in this proposal. Budget design time for it; do not assume any sandboxing product covers it.
+5. Other challenges and risks
+The largest risk is not that an agent misbehaves — the whole design assumes some will. It is that the organization cannot identify the agent, cannot force it through the governed path, or loses the control plane needed to stop it. In that order of priority:
+Risk
+What it means
+What to do
+Gateway bypass — the #1 risk
+If an agent holds a model-provider key directly, or has unrestricted internet access, every budget and block in this report is advisory.
+Provider credentials exist only inside the gateway (or a brokered secrets path). Egress rules permit model traffic only from the gateway. Verified by an acceptance test.
+The gateway itself gets attacked
+LiteLLM had real, exploited vulnerabilities in 2026 (Section 6): one added to CISA’s Known Exploited Vulnerabilities catalog in June, and a separate chain taking a low-privilege user to full server takeover. A compromised gateway exposes provider keys, budgets, and every agent’s credentials.
+Treat the gateway as top-tier infrastructure, like a secrets vault: deploy at or above the fixed versions, isolate admin and test routes from anything agents can reach, restrict custom-code guardrails, monitor advisories, and revalidate on every upgrade. Add depth beyond patching: a locked-down, read-only container image with no shell utilities; unused admin and test endpoints disabled outright (the exploited MCP test routes were exactly this class); provider credentials held in an external secrets manager rather than process memory or environment; and an authenticating proxy in front of every management route.
+Licensing mismatch
+The open-source plan quietly assumed features (SSO/JWT auth, SCIM, JWT-to-key mapping) that LiteLLM documents as Enterprise.
+Decide before Week 1: fund the Enterprise license or approve the custom authentication layer (Section 2). Not a configuration detail.
+The emergency stop is unavailable when needed
+If the kill path depends on the main dashboard or the observability stack, an outage — or an attacker — removes the brakes exactly when they are needed.
+Keep a separately authenticated, audited emergency-stop path that works when the primary control plane is down. Drill it (Section 8).
+Identity spoofing and runaway delegation
+An agent claiming to be another agent, or spawning sub-agents that inherit broad powers, defeats per-agent controls.
+Never trust a self-declared agent name; bind identity to the authenticated credential. Sub-agents inherit narrower budgets and permissions than their parent — never broader — and delegation depth is capped. Inheritance must be enforced, not declared: issue sub-agent credentials by attenuating the parent’s (capability-style tokens that cannot be broadened), so a compromised orchestrator cannot mint wider scope — and test it (Section 8).
+Restart and persistence
+Killing a process without changing desired state lets the platform restart it; a real escape may leave persistence outside the sandbox.
+Stop desired state first (Section 4); after a confirmed escape, rotate secrets and rebuild rather than trusting cleanup.
+Cost blind spots
+Model tokens are not the only spend: tools, search and SaaS APIs, storage, GPU time, retries, and delegated agents all cost money outside the gateway’s view.
+Scope the pilot’s budget claim honestly (model spend), and plan allocation or controls for the rest as a later phase. Meanwhile, enforce outbound egress allowlists so unapproved paid services are unreachable, and record tool and external-API usage in the control plane’s register alongside model spend.
+Privacy inside the evidence
+Observability captures prompts and outputs — which can contain personal data, credentials, or regulated content. The SDK’s content capture is on by default.
+Policy-controlled capture, redaction, truncation, least retention, and role-based access to traces. Decide per data classification, not globally.
+False positives interrupt real work
+Bulk containment can stop legitimate, critical business tasks.
+Confidence tiers, blast-radius preview before firing, reversible quarantine before destructive cleanup, and measured false-positive rates in the pilot.
+Governance decays after launch
+An approval gate at entry, with no recurring review, drifts out of date as agents, models, and owners change.
+A recurring (monthly) registry and policy review, plus periodic regression tests of approved models — behavior can change even when the model name does not.
+Prompt injection — the in-scope rogue
+The most likely real-world rogue-agent path (top of the OWASP risk list for LLM applications): malicious content in a document, web page, or tool response subverts the agent, which then misuses its own authorized access — no spend spike, no sandbox escape, nothing for breakout detection to see.
+Contain by scope, not by detection: least-privilege tool and data access per agent; untrusted content kept separate from instructions where the framework allows; the stack’s inline guardrails (prompt-injection screening on pre/post-call hooks) enabled; human approval for consequential actions (payments, external sends, destructive writes); and audits of action patterns, not just spend.
+The identity register itself is compromised
+Every control hangs off one governed identity store — which makes it the highest-value target in the design. An attacker with write access could impersonate any agent, or mass-deactivate every legitimate one: a denial of service on the business, not just a security event.
+Protect it like the vault it is: integrity monitoring and an append-only audit log; dual control for mass actions; tested backup and restore; and an integrity-compromise scenario in the drill program — the kill-plane outage test covers availability, not integrity.
+A note on statistics: both earlier documents quoted industry figures (e.g. &quot;60% of enterprises cannot shut down a rogue agent&quot;, identity-sprawl ratios). Validation traced these to vendor marketing and secondary commentary. The direction they point is real, but the numbers are not verifiable enough for a management document — this report deliberately omits them, and they should not be repeated in slides or videos without reviewing the underlying survey methodology. The controls above are justified without them.
+6. Where the two reviews differed — and what the sources say
+Two AI-assisted reviews (22 August 2026) answered the same four questions; the second corrected the first. For this report, every materially disputed claim was re-checked against primary documentation and security advisories on 23 August 2026. This table is the audit trail — and the defensible basis for the statements above.
+Claim
+First review said
+Second review said
+Validated finding
+Instant key blocking
+Keys and whole teams can be blocked in real time
+Confirmed, with the caveat that it does not stop the running workload
+CONFIRMED. /key/block and /team/block are documented open-source endpoints; a team block rejects calls from all keys under that team. Both caveats stand: next-request only, workload keeps running.
+Hard budget caps need a custom ledger
+Treated the reserve-before-send ledger as custom and non-negotiable
+Native: reservation is default-on, plus an optional fail-closed mode
+SECOND REVIEW CORRECT. Current LiteLLM docs: budget reservation enabled by default; fail_closed_budget_enforcement available. Named gaps (batch jobs, non-token-priced routes) justify custom work only where tests prove it.
+SSO/JWT support
+Presented JWT/OIDC, SCIM, JWT-to-key mapping without licensing caveats
+These are Enterprise-licensed features
+SECOND REVIEW CORRECT. The docs label JWT/OIDC auth &quot;on LiteLLM Enterprise&quot;; JWT-to-key mapping is Enterprise beta. Forces the Week-1 licensing decision (Section 2).
+What OpenLIT can do
+Application-level telemetry only
+Also ships a Controller that passively discovers LLM-calling services via eBPF
+SECOND REVIEW CORRECT. Controller docs confirm no-code discovery across Kubernetes/Docker/Linux, an inventory page, and per-service instrumentation toggles. It is discovery and evidence — not a kill switch, and itself privileged.
+The 2026 LiteLLM exploit
+&quot;Unauthenticated&quot; remote-code-execution via MCP test endpoints
+&quot;Required a valid proxy key — calling it unauthenticated was too broad&quot;
+BOTH PARTLY RIGHT. CVE-2026-42271 (MCP test endpoints) requires a valid key on its own — but chained with CVE-2026-48710 (an authentication bypass in the underlying web framework) it becomes unauthenticated, and that chain was exploited in the wild. CISA added it to the KEV catalog on 8 June 2026. Fixed in LiteLLM 1.83.7 (with the framework patch). A separate three-CVE chain (low-privilege user to admin to code execution) was also published and fixed. Deploy at or above the fix set; isolate admin/test routes.
+Bulk &quot;kill switch&quot;
+Proposed as a control-plane API to build
+Agreed — and stressed no product ships it natively
+CONFIRMED BY BOTH. No documented atomic bulk-termination API exists in these products. It is a design deliverable coordinating gateway, orchestrator, network, and identity (Section 4).
+A2A agent cards for discovery
+A discovery mechanism (crawl well-known paths)
+Enrichment only — requires already knowing the endpoint
+SECOND REVIEW CORRECT, with nuance: cards are standardized and crawlable where hosts are known; they cannot cold-start discovery of unknown agents and are self-declared, hence untrusted until attested.
+Industry statistics
+Quoted vendor figures as supporting evidence
+Flagged them as unverifiable vendor commentary
+SECOND REVIEW CORRECT. Omitted from this report (Section 5).
+Everything the first review got right structurally — identity-based shutdown, discovery-proposes/humans-approve, two independent detection planes, the isolation ladder, gateway-as-top-tier-infrastructure — survived validation and is retained above.
+This revision adds a third pass. Two further reviews dated 25 August 2026 — an adversarial critical read and a solution-feasibility assessment — were themselves validated before their findings were merged. Confirmed and adopted: the cost-versus-harm gap in the stop window; delegation limits needing cryptographic enforcement rather than convention; watchdog integrity after a host compromise; admission control binding sandbox tier to declared capability; approval fatigue as a failure mode of human gates; established connections surviving network quarantine (implementation-defined per the Kubernetes documentation — now its own acceptance test); gateway defense-in-depth, including the confirmed attribution of the 2026 exploit chain to a Starlette authentication bypass (CVE-2026-48710); and prompt injection as the missing threat class. Corrected or tempered during validation: passive eBPF discovery is not simply blind to encrypted traffic — capture at the TLS-library boundary sees plaintext for common runtimes, and the precise caveat is evasion by uncommon or statically linked TLS stacks and by non-LLM side channels; a blocked agent’s restarting pod is throttled by the platform’s exponential back-off rather than crash-looping at high frequency; and the privileged discovery Controller was not left entirely without a stated control — the scoping direction existed, and what this revision adds is the concrete design behind it.
+7. Decisions requested from leadership
+Choose the identity route (before Week 1). LiteLLM Enterprise license, or open-source with per-agent keys plus a custom authentication layer. Both work; the plan must name one and cost it.
+Mandate the governed path. No model-provider credentials outside the gateway; egress rules that make the gateway the only road to AI providers. Without this, everything else is advisory.
+Fund the emergency stop as a first-class deliverable. The per-agent and bulk stop actions, with a measured stop-time target (recommended: under 60 seconds end-to-end) proven by drill — not a deferred item.
+Adopt the isolation policy. Sandbox tier matched to agent capability; microVM isolation for any agent that executes model-generated code.
+Fund enforcement, not just policy. The three rules most likely to decay into convention get mechanisms: admission control that binds sandbox tier to declared capability, attenuated delegation credentials that cannot be broadened, and gateway hardening beyond patch-and-monitor (read-only image, vaulted secrets, disabled test endpoints).
+Install the operating cadence. Every agent has one named accountable owner (no owner, no budget); a monthly registry and policy review; security advisories on the gateway tracked with a defined patch response.
+8. Proof, not promises: pilot acceptance tests
+These twelve tests convert this report’s claims into demonstrated capability. The last four were added on critique — they test harm, persistence, and enforcement, where the original eight tested spend and availability. Time targets are recommended starting points to agree with the customer, not vendor guarantees.
+Test
+Pass condition
+Owner
+Single-agent stop
+A named agent’s new model requests are denied within the agreed target (recommend 30 seconds or less) of the stop decision.
+Platform
+Authenticated-agent stop
+An SSO/JWT or certificate-based agent is stopped without waiting for its token to expire.
+Identity
+In-flight exposure
+Streaming/cancel behavior measured per provider; residual spend bounded by output-token and time ceilings.
+Platform
+No bypass
+Agents cannot reach model providers directly and hold no provider credentials.
+Network / Security
+Shadow discovery
+A deliberately unregistered service making an AI call appears in the pending queue and can spend nothing.
+Observability
+Bulk quarantine
+All workloads matching a selector (image, team, namespace, host) are denied, stopped, and do not restart.
+SRE
+Host-compromise drill
+A simulated escape triggers node isolation, evidence preservation, secret rotation, and rebuild.
+Security / SRE
+Kill-plane outage
+The emergency stop still works with the main dashboard and evidence store down.
+Architecture
+Quarantine kills live connections
+A long-lived connection opened before quarantine (streaming response; simulated exfiltration stream) is terminated when the deny policy lands — verified on the chosen network implementation, with connection state flushed.
+Network / SRE
+In-window harm
+Between the stop decision and full containment, the agent cannot complete a consequential side-effect — an external API call, a message send, a database write — not merely a bounded spend.
+Security / Platform
+Delegation attenuation
+A sub-agent attempting to use or mint broader scope than its parent is denied, and the attempt is alerted.
+Identity
+Sandbox tier admission
+Deploying an agent whose declared capability requires a stronger sandbox than the tier requested is rejected at admission time.
+Platform
+9. The two-minute version for the meeting
+If you say only this, it is correct
+We can shut down a rogue agent, and for new spending it takes seconds — but the shutdown is not one API call on one key. The gateway stops new model spend; the compute platform stops the program; identity and network controls remove its other access. All of that hangs off one governed agent identity, which is why the mechanism is the same whether the agent uses a key or corporate sign-on. The one open item is commercial, not technical: SSO-authenticated agents need either a LiteLLM Enterprise license or a small custom authentication layer.
+Discovery scales. We stop registering agents by hand and instead reconcile what was deployed, what identity was issued, and what is actually making AI calls — the last via network-level observation that needs no cooperation from the agent. Anything discovered enters a pending queue with zero budget until a human approves it.
+If an agent runs away inside its sandbox, we block it and stop its workload. If it escapes its sandbox, we contain the larger boundary — potentially the whole host — rotate credentials, and rebuild. Bulk containment is selectable by group, designed by us, human-triggered for now.
+The proposal stands, on four conditions: all model traffic is forced through the gateway; the licensing choice is made explicitly; the emergency stop is tested end-to-end, not assumed; and the gateway itself is hardened and patched like the critical infrastructure it is — 2026 proved attackers target it. Two caveats keep the story honest: today’s budget control covers model spend, with tool and infrastructure costs following in a later phase; and detection covers agents that become anomalous — an agent manipulated through prompt injection misbehaves inside its authorized scope, so the defense there is least privilege, inline guardrails, and approval gates on consequential actions, not the kill switch. And sizing, honestly stated: months of multi-team platform engineering across gateway, identity, orchestrator, and network — feasible with today’s components, but an integration project, not an install.
+Sources
+Primary documentation and advisories checked on 23 August 2026 for this consolidation:
+LiteLLM — Virtual Keys (key block/unblock) — https://docs.litellm.ai/docs/proxy/virtual_keys
+LiteLLM — Budgets and Rate Limits (default budget reservation; fail-closed enforcement; batch and non-token-priced caveats) — https://docs.litellm.ai/docs/proxy/users
+LiteLLM — JWT/OIDC authentication (Enterprise labeling; JWT-to-key mapping beta) — https://docs.litellm.ai/docs/proxy/token_auth
+LiteLLM — team management endpoints incl. /team/block (source) — https://github.com/BerriAI/litellm — proxy/management_endpoints/team_endpoints.py
+OpenLIT — Controller overview (eBPF discovery of LLM-calling services; instrumentation toggles; privileged deployment) — https://docs.openlit.io/latest/controller/overview
+CVE-2026-42271 — LiteLLM MCP test-endpoint RCE; CISA KEV 8 June 2026; fixed 1.83.7; chained with CVE-2026-48710 (Help Net Security) — https://www.helpnetsecurity.com/2026/06/09/litellm-vulnerability-under-active-attack-cisa-warns-cve-2026-42271/
+LiteLLM privilege-escalation chain CVE-2026-47101 / -47102 / -40217 (Obsidian Security) — https://www.obsidiansecurity.com/blog/litellm-privilege-escalation-rce
+Horizon3.ai — CVE-2026-42271 chained with CVE-2026-48710 (Starlette authentication bypass) — https://horizon3.ai/attack-research/vulnerabilities/cve-2026-42271-chained-with-cve-2026-48710/
+OWASP GenAI Security Project — Top 10 for LLM Applications (prompt injection as the top-listed risk) — https://genai.owasp.org/
+A2A protocol — agent discovery and Agent Card specification — https://a2a-protocol.org/latest/specification/
+Kubernetes — NetworkPolicy (effect on existing connections is implementation-defined) — https://kubernetes.io/docs/concepts/services-networking/network-policies/
+gVisor security model; Kata Containers; Firecracker microVMs (isolation tiers) — https://gvisor.dev/docs/ · https://katacontainers.io · https://firecracker-microvm.github.io
+Internal: On-Prem AI Gateway and Agent Governance — consolidated report, 25 July 2026; follow-up response and validated business brief, 22 August 2026; critical read and solution-feasibility review, 25 August 2026 — Project folder: On Prem Governance and Cost Control
+Validation note: product documentation and security status change quickly. Re-confirm feature licensing, exact version behavior, and current advisories when the pilot software image is selected.

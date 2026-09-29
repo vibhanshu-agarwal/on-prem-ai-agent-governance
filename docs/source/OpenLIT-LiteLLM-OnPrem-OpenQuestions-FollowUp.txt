@@ -1,0 +1,191 @@
+On-Prem AI Gateway and Agent Governance — Follow-Up
+
+
+
+
+Open Questions: Rogue-Agent Control, Discovery at Scale, and Sandbox Containment
+Answers to four questions raised in the architecture review meeting, addressed against the recommended LiteLLM + OpenLIT + custom control-plane design
+
+Prepared for: architecture and product planning
+Date: 22 August 2026
+Companion to: On-Prem AI Gateway and Agent Governance (consolidated report, 25 July 2026)
+Summary: none of the four questions require abandoning the recommended architecture. Rogue-agent control should be identity-based (agent_id in the control-plane registry and ledger), not credential-type-based, so it works the same whether an agent authenticates with a static key, a JWT, or a workload certificate. Agent discovery can scale past manual registration by treating discovery as a feed of proposals into the same human-approved registry, never as an auto-activation path. Sandbox-breakout detection needs an out-of-band, host/kernel-level signal in addition to OpenLIT&apos;s application-level telemetry, because a genuinely compromised agent cannot be trusted to keep reporting on itself honestly. And the most urgent near-term risk is not a hypothetical rogue agent — it is the gateway software itself, which has an active, CISA-catalogued exploitation history in 2026.
+
+1. Purpose and scope
+This addendum responds to four follow-up questions raised after the review of the On-Prem AI Gateway and Agent Governance report. It does not revisit the core recommendation — LiteLLM as the request-path gateway, OpenLIT as observability, and a custom control plane for identity, budget, and policy — it extends that design to cover four operational questions the base report left open: how a specific agent actually gets shut off; how new agents get discovered at scale without a manual registration bottleneck; how a sandboxed agent that breaks containment gets detected and stopped, individually and in bulk; and what other risks belong on the register before the pilot&apos;s Week 0 gate closes.
+2. Turning off a rogue, budget-devouring agent
+2.1 The mechanism should be identity-based, not credential-based
+The base report already establishes the right anchor: &quot;every request should carry a trusted, gateway-validated identity context... use a per-agent service identity or virtual key.&quot; The important architectural point for a kill switch is that revocation should be enforced by the control plane&apos;s agent registry and synchronous ledger, keyed on `agent_id`, and checked on every budget reservation — independent of what credential type got the request there. Don&apos;t build the kill switch on top of the authentication mechanism; build it on top of the identity that the authentication mechanism resolves to. That is what makes the same switch work whether the agent used a static key, a JWT, or (in a more mature deployment) a workload certificate.
+2.2 If the agent authenticates with a static key
+LiteLLM virtual keys support real-time administrative blocking — a key can be blocked, unblocked, or deleted through the proxy&apos;s key-management API, and an entire team can be blocked in one call, which cuts off every key issued under it.
+Budget and rate-limit enforcement is a synchronous, pre-request hard cap when the proxy is backed by its database: LiteLLM estimates the maximum cost of a request, reserves that amount against the applicable budget, rejects the request before it reaches the model provider if the reservation would exceed the cap, and reconciles the reservation to actual cost after the response returns. That reserve/commit/release pattern is exactly what the base report&apos;s synchronous enforcement ledger elaborates on — this confirms it is the correct place to enforce a stop, not an optional refinement.
+Limitation: blocking a key stops the next request. It does not recall a request already forwarded to the model provider, and — per the base report&apos;s own point — budget accounting is otherwise asynchronous unless the reservation layer is in place. This is the practical argument for treating the synchronous ledger as non-negotiable rather than a nice-to-have.
+2.3 If the agent authenticates with OAuth/OIDC/JWT or another non-static credential
+LiteLLM does support OIDC/JWT authentication (signature validation against a JWKS endpoint), SCIM-based identity provisioning from an IdP, and JWT-to-virtual-key mapping with lazy auto-registration on first call. The complication is structural: a bearer JWT is validated cryptographically against a public key, not looked up as a row in a table — there is no signature you can retroactively invalidate. Three revocation paths exist, in order of precision:
+Force every JWT-bearing agent through JWT-to-virtual-key mapping at first use, so the resulting virtual key becomes the single blockable object regardless of how the caller originally authenticated. Recommend making this mandatory control-plane policy, not an optional configuration flag.
+Where mapping isn&apos;t used, fall back to team-level blocking or role revocation at the identity provider (with role/team sync enabled) — coarser, since it affects everyone sharing that team or role, so only acceptable where agent-to-team mapping is effectively 1:1.
+Short-lived tokens (minutes, not hours) as a backstop so an unrevoked token ages out quickly. This bounds the blast radius of the gap between &quot;revocation decided&quot; and &quot;revocation effective&quot; — it does not substitute for the two mechanisms above.
+Recommend adding a mandatory field to the Agent governance object the base report already specifies: credential-revocation path and target time. If an agent&apos;s authentication mode cannot be revoked in well under a minute — matching what dedicated &quot;agentic kill switch&quot; tooling advertises as a design target — it should not be approved for production budget.
+2.4 In-flight requests and streaming
+Blocking a key or JWT mapping stops the next request; it does not interrupt a stream that is already open. The base report&apos;s streaming-ceiling design (a `max_tokens` bound or an agent-default ceiling, with an explicit budget event on exhaustion) limits the damage per stream, but a genuine kill switch needs one more primitive the base architecture does not yet name: an admin action that closes any currently open gateway connections tagged with a given `agent_id`/`run_id`. Recommend a composite control-plane action — conceptually `POST /agents/{agent_id}/kill` — that does three things atomically: sets the registry status to DISABLED so the ledger refuses new reservations, blocks or deletes the associated key/JWT mapping, and sends an abort signal to any tracked active streams for that agent. This matches the shape dedicated kill-switch products advertise (&quot;revoke its tools, freeze its memory, suspend the session, or halt an entire fleet of agents at once&quot;).
+2.5 A trust-boundary caveat that changes the urgency here
+Everything above assumes the gateway&apos;s own admin plane is trustworthy. In 2026 that assumption has been tested: LiteLLM had a chained set of vulnerabilities (an authorization bypass letting a low-privilege user mint an unrestricted virtual key, a privilege-escalation flaw via an unchecked profile-update field, and a guardrail sandbox escape via unsafe code execution) that together took a low-privilege caller to admin and then to remote code execution — and a separate, actively exploited remote-code-execution flaw via unauthenticated MCP test endpoints that CISA added to its Known Exploited Vulnerabilities catalog in June 2026. Practically: pin the gateway to a version that includes the fix set before the pilot&apos;s Week 0 gate closes, network-isolate the admin API from anything an agent can reach, and treat &quot;can the kill switch itself be trusted&quot; as part of the same threat model as &quot;can a rogue agent be stopped.&quot; See section 5, item 1.
+
+Credential type
+Real-time revocation mechanism
+Granularity
+Known gap
+Static virtual key
+Administrative key-block / key-delete API
+Single agent
+Does not recall an in-flight stream
+JWT/OIDC, mapped to a virtual key
+Block the underlying virtual key
+Single agent
+Requires mandatory mapping policy — not automatic
+JWT/OIDC, unmapped
+Team-level block or IdP role revocation
+Team/role (coarse)
+Blast radius extends to everyone sharing the team or role
+Workload identity (mTLS/SPIFFE — not in the base report&apos;s v1)
+Remove identity from trust bundle / revoke certificate
+Single agent, network layer
+Not native to LiteLLM; requires service-mesh integration
+
+3. An agent discovery mechanism that scales past manual registration
+3.1 Keep the distinction the base report already draws
+The base design&apos;s agent registry is explicitly a registry of record for authorization and budget (`agent_id`, owner, status, approved models, guardrail profile). Discovery mechanisms should feed *proposals* into that registry; they should never be allowed to auto-activate a budget-bearing identity. That constraint is the one thing that should not be relaxed as the inventory grows — it&apos;s what keeps discovery from becoming a bypass of the approval workflow the report already relies on.
+3.2 Four complementary discovery feeds, not four competing designs
+Agent-card crawl. In the emerging Agent2Agent (A2A) pattern, each agent or agent host publishes a self-describing manifest at a well-known path (an RFC 8615-style convention, e.g. `/.well-known/agent-card.json`) declaring identity, capabilities, and required authentication scheme. A discovery service can periodically poll known subnets or an internal service catalog for these manifests and create pending registration entries automatically — this is the closest match to &quot;agent discovery&quot; in the literal sense.
+MCP/tool registry. An enterprise MCP registry (the pattern several vendors ship in 2026) tells you which tools and MCP servers exist and how to reach them — but that answers &quot;what can be called,&quot; not &quot;who is calling and under what budget.&quot; Worth building for tool governance, but it is not a substitute for the agent identity registry and shouldn&apos;t be conflated with it in the design.
+IdP-driven provisioning. SCIM sync of users/teams from the identity provider, combined with JWT auto-registration on first authenticated call, works well where the org&apos;s IdP or agent-orchestration platform is already the source of truth for who is allowed to run an agent. New auto-registered identities must default to zero or near-zero budget until approved — that has to be enforced as control-plane policy, not left as a gateway configuration default.
+Workload-identity signal. If the organization runs Kubernetes with a service mesh, a new workload certificate or SPIFFE identity appearing is itself a free, infrastructure-derived discovery event that doesn&apos;t require the agent to cooperate by publishing anything.
+Telemetry backstop (shadow-agent detection). OpenLIT/OpenTelemetry traces plus network egress monitoring can flag calls to a model-provider endpoint originating from an identity absent from the registry. This catches what the other four feeds miss, and it matters: current research finds roughly one in six organizations do not track the creation of new AI-related identities at all, and &quot;shadow AI&quot; is a named, growing 2026 governance category.
+3.3 The governance layer stays constant regardless of which feed fired
+Every discovery hit should land in one pending queue, gated by the same approval mechanism the base report already recommends for policy changes — Git-reviewed, PR-style approval scales far better than approval-by-meeting, and it produces the audit trail the Agent object&apos;s &quot;owner&quot; field needs to actually mean something. Recommend rate-limiting how many pending proposals a single discovery source can generate per day, so a noisy or compromised discovery feed cannot flood the approval queue (this connects to the risk in section 5, item 6).
+3.4 What not to build for the four-week pilot
+Full auto-discovery — org-wide polling, registry federation, cross-cluster manifest crawling — is a legitimate later-phase capability, not a four-week deliverable, consistent with the base report&apos;s own descoping logic. For the pilot, recommend standing up only the telemetry backstop: it reuses the evidence plane the base report already specifies, costs the least to add, and is the one most likely to catch what manual registration misses even in a three-agent pilot.
+
+Discovery feed
+What it actually discovers
+Effort to add
+Best suited to
+Agent-card crawl (A2A-style)
+New agent instances, via self-published manifest
+Medium — needs a crawler and agents that publish cards
+Agent frameworks you control
+MCP/tool registry
+New tools and servers — not agent identities
+Medium
+Tool sprawl, not agent sprawl
+IdP/SCIM + JWT auto-register
+New human-owned agents, via the IdP
+Low, if the IdP is already integrated
+Human-initiated agents
+Workload-identity signal
+New workload certificates in the service mesh
+Low, if a mesh already exists
+Infrastructure-provisioned agents
+Telemetry backstop
+Unregistered traffic reaching model providers
+Low — reuses the evidence plane
+Shadow AI / catch-all, recommended for the pilot
+
+4. Discovering sandbox breakouts and killing rogue agents en masse
+4.1 Detection and mass termination are two separate subsystems
+Treat &quot;detect a breakout&quot; and &quot;execute a kill at scale&quot; as different subsystems with different failure modes — conflating them into a single &quot;auto-kill&quot; feature is where most current vendor offerings stop short. Even the vendors marketing an &quot;agentic kill switch&quot; in 2026 describe it as high-confidence detection followed by a human taking the agent offline, not a fully autonomous trigger.
+4.2 Detection needs a signal that doesn&apos;t depend on the agent&apos;s cooperation
+OpenLIT/OpenTelemetry application-level tracing — the base report&apos;s evidence plane — is necessary but not sufficient here: a genuinely compromised agent process has no obligation to keep emitting honest spans about what it is doing. Recommend a second, independent detection layer at the host or kernel level — eBPF-based runtime security monitoring, or the microVM/container runtime&apos;s own audit hooks — watching for signals the agent cannot suppress by itself:
+Unexpected outbound network destinations against an egress allowlist
+Unexpected child-process spawning
+Filesystem writes outside the declared workspace
+A spend or token-rate spike that doesn&apos;t match the ledger&apos;s expected reservation pattern (this connects directly back to section 2)
+Correlate these two planes — application-level OpenLIT traces and host-level runtime security — rather than trusting either alone; that correlation is itself a design item worth scoping explicitly, not an assumed byproduct of installing both.
+4.3 The isolation tier determines what &quot;kill&quot; actually means
+Recommend the isolation tier match what the agent is allowed to do, mirroring the base report&apos;s own tool/MCP-authorization language:
+Plain containers (shared kernel) — fastest and cheapest, weakest isolation; a breakout is one kernel exploit away. Acceptable only for agents with no shell or arbitrary-code execution.
+gVisor (user-space syscall interception) — moderate isolation and overhead; a reasonable default for agents that call tools but do not execute arbitrary, attacker-influenced code.
+Firecracker/Kata microVMs (hardware-virtualized kernel) — the strongest isolation available in current practice; recommended for any agent executing LLM-generated code or shell commands, which is precisely the class of agent a rogue-agent incident is most likely to involve. Here, &quot;kill&quot; means tearing down the microVM through the VMM&apos;s own API — this destroys the entire compromised kernel state in one action rather than relying on a process kill to have caught every spawned child.
+4.4 Designing the mass-kill action
+Build a bulk quarantine action selectable by `agent_id` list, tenant, MCP/tool version (for a poisoned-dependency incident), or host — not only a single-agent disable. Fire two actions in parallel, not serially, because they have different latencies:
+Gateway-side (fast, seconds): mark every selected agent DISABLED in the registry — stopping new spend immediately, per section 2 — and abort any tracked in-flight streams.
+Infrastructure-side (slower, seconds to tens of seconds): microVM teardown or container eviction per the tier above, plus network-layer quarantine — revoking the mTLS certificate or SPIFFE trust, or applying a security-group/network-policy deny rule. Network quarantine is often faster than a clean VM teardown and should be treated as the immediate containment action while teardown completes behind it.
+Recommend this be a human-triggered bulk action for the pilot — a one-click multi-select in the control-plane dashboard — rather than a fully autonomous kill-on-detection. False positives that terminate a legitimate agent mid-task are a real cost, and current market practice favors high-confidence detection paired with human action over full autonomy. Promote to autonomous kill only once the pilot has measured an acceptably low false-positive rate; that&apos;s a reasonable Week 4 acceptance-criterion candidate, not a Week 1 assumption.
+4.5 An honest gap worth naming
+Current sandboxing guidance in 2026 is detailed on single-agent isolation and detection but notably thin on fleet-wide, bulk termination orchestration. This is genuinely underbuilt across the industry, not a gap specific to this proposal — budget real design time for the mass-kill workflow rather than assuming an off-the-shelf sandboxing product covers it.
+
+Isolation tier
+What a breakout looks like
+&quot;Kill&quot; primitive
+Recommended for
+Plain container
+Kernel-level exploit escapes the namespace/cgroup
+Orchestrator eviction + SIGKILL + cgroup freeze
+Agents with no shell/code execution
+gVisor
+Syscall interception layer bypassed or exhausted
+Process termination within the sandbox runtime
+Agents that call tools but don&apos;t run arbitrary code
+Firecracker/Kata microVM
+Requires a hypervisor-level exploit — high bar
+VM teardown via the VMM API (clean, single action)
+Agents executing LLM-generated code or shell commands
+
+5. Other challenges and risks worth adding to the register
+The base report&apos;s risk register already covers ledger capacity, guardrail latency, agent-framework integration, no-HA/fail-closed behavior, and provider/licensing slippage. The items below extend it — none replace the base report&apos;s own descope logic, but several should influence the Week 0 entry gate directly.
+
+Risk
+Why it matters now
+Recommended mitigation
+The gateway itself is an active attack target, not a hypothetical one
+A LiteLLM remote-code-execution flaw was added to CISA&apos;s Known Exploited Vulnerabilities catalog in June 2026; a separate three-flaw chain took a low-privilege user to admin and then RCE via an unvalidated permissions field, an unchecked role field, and a guardrail code-execution sandbox escape. A compromised gateway exposes everything it can reach — provider keys, the database, every agent&apos;s credentials.
+Pin to a patched release before Week 0 closes; network-isolate admin/test routes from anything an agent can reach; tightly scope or disable custom-code guardrails; treat the gateway as Tier-0 infrastructure with the hardening bar of a secrets manager.
+Non-human identity sprawl outpaces registration discipline
+Industry-wide, non-human identities already outnumber human ones by roughly 45:1 to 144:1 in cloud environments; AI-related secrets are the fastest-growing leaked-credential category; about half of organizations report no clear ownership of their AI identities.
+Enforce the Agent object&apos;s owner field rather than only recording it — no owner, no budget. Add a maximum credential age with forced rotation or re-approval instead of indefinite standing keys.
+Kill-switch readiness is the industry median failure, not an edge case
+Recent benchmarking found roughly 60% of enterprises today cannot actually terminate a misbehaving agent, about 55% cannot network-isolate one, and about 63% cannot enforce purpose limitations on a deployed agent.
+Treat the section 2/4 kill-switch design as a first-class pilot deliverable with its own acceptance test — can a specific pilot agent actually be killed end-to-end within a defined time — not a deferred item.
+Prompt injection is an architectural limitation, not something guardrails fully close
+Current security research traces this to a root cause: an LLM has no reliable way to distinguish an instruction from data inside the same context window. Inline guardrails reduce but do not eliminate this.
+Document injection explicitly as an accepted residual risk requiring defense-in-depth — isolation tier plus least-privilege tool scoping plus human review on high-impact actions — rather than treating a guardrail engine as a complete control.
+Multi-agent delegation creates cascading-failure paths
+As agents delegate to sub-agents — which the base report&apos;s own run_id/parent_run_id propagation already anticipates — a bad output or compromised credential can propagate several hops before detection.
+Cap delegation depth; require that permissions and budget only narrow, never widen, at each delegation hop; preserve the full parent_run_id chain in the evidence plane for post-incident forensics.
+Discovery itself becomes a new attack surface
+If the section 3 auto-discovery feeds are adopted, a spoofed or malicious agent manifest could be auto-proposed into the approval queue; under alert fatigue, a rubber-stamped approval defeats the control entirely.
+Rate-limit auto-generated pending proposals per source per day; require stronger evidence for an auto-proposed entry (e.g., workload-identity attestation) than for a manually initiated registration request.
+Governance decays without a recurring review, not just an entry gate
+Industry data shows only around 40% of organizations run periodic post-deployment security reviews, and roughly a third have no pre-launch validation process at all.
+Add a recurring — for example monthly — registry and policy review cadence to the control plane&apos;s operations checklist, in addition to the one-time Week 0 entry gate the base report specifies.
+Model/vendor behavior can drift without a version change
+Provider-side model updates can silently change behavior even when the pinned model identifier stays the same.
+Extend the model/vendor governance object&apos;s lifecycle to include periodic golden-task regression testing against each approved model, not only a one-time approval at onboarding.
+
+6. Recommended additions to the base design
+Agent governance object: enforce the owner field (no owner, no budget); add a credential-revocation-path field and a target revocation time; add a maximum credential age.
+New control-plane API: an atomic per-agent kill action (disable in registry, revoke credential, abort in-flight streams) and a bulk variant scoped by tenant, tool/MCP version, or host.
+New pending-registration queue: fed by discovery signals — recommend shipping only the telemetry backstop for the pilot, with agent-card crawl, IdP/SCIM, and workload-identity signals as later-phase additions.
+New detection plane: host/kernel-level runtime security correlated with OpenLIT&apos;s application-level traces — an addition to the evidence plane, not a replacement for it.
+Week 0 gate addition: gateway version pinned to a release that includes the 2026 CVE fix set; admin routes network-isolated from agent reach; guardrail custom-code execution reviewed and restricted.
+New operating cadence: a recurring registry/policy review, in addition to the existing one-time entry gate.
+
+7. References
+• Budgets, Rate Limits (LiteLLM docs) — https://docs.litellm.ai/docs/proxy/users
+• Setting Tag Budgets (LiteLLM docs) — https://docs.litellm.ai/docs/proxy/tag_budgets
+• Provisioning identities and issuing keys (LiteLLM docs) — https://docs.litellm.ai/docs/proxy/identity_provisioning
+• OIDC – JWT-based Auth (LiteLLM docs) — https://docs.litellm.ai/docs/proxy/token_auth
+• JWT → Virtual Key Mapping (LiteLLM docs) — https://docs.litellm.ai/docs/proxy/jwt_key_mapping
+• Role-based Access Controls / RBAC (LiteLLM docs) — https://docs.litellm.ai/docs/proxy/access_control
+• Virtual Keys (LiteLLM docs) — https://litellm.vercel.app/docs/proxy/virtual_keys
+• CSA Research Note — LiteLLM CVE-2026-42271 AI Gateway Exploitation — https://labs.cloudsecurityalliance.org/research/csa-research-note-litellm-cve-2026-42271-ai-gateway-exploita/
+• Breaking LiteLLM: privilege escalation and RCE chain (Obsidian Security) — https://www.obsidiansecurity.com/blog/litellm-privilege-escalation-rce
+• CISA warning on LiteLLM and AI-gateway service-account governance (TechRepublic) — https://www.techrepublic.com/article/news-litellm-cisa-ai-gateway-service-account-governance/
+• How Agent Cards Work in the A2A Protocol — https://blog.aigrowthagent.co/how-agent-cards-work/
+• What is an MCP Registry? (Kong) — https://konghq.com/blog/learning-center/what-is-an-mcp-registry
+• How to build an enterprise-grade MCP registry (InfoWorld) — https://www.infoworld.com/article/4145014/how-to-build-an-enterprise-grade-mcp-registry.html
+• As AI Agents Go Rogue, Straiker Launches an Agentic Kill Switch — https://www.straiker.ai/blog/agentic-kill-switch-for-coding-agents
+• 60% of Enterprises Can&apos;t Shut Down a Rogue AI Agent (Kiteworks) — https://kiteworks.substack.com/p/60-of-enterprises-cant-shut-down
+• The Non-Human Identity Governance Vacuum (Cloud Security Alliance whitepaper) — https://labs.cloudsecurityalliance.org/research/csa-whitepaper-nonhuman-identity-agentic-ai-governance-v1-cs/
+• How to sandbox AI agents in 2026: MicroVMs, gVisor &amp; isolation strategies (Northflank) — https://northflank.com/blog/how-to-sandbox-ai-agents
+• On-Prem AI Gateway and Agent Governance — companion consolidated report, 25 July 2026 (internal document, not web-linked)

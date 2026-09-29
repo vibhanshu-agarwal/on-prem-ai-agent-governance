@@ -1,0 +1,601 @@
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+On-Prem AI Gateway and Agent
+Governance
+
+OpenLIT + LiteLLM assessment, licensing, capacity limits, market potential, and
+four-week supervised pilot feasibility
+
+Consolidated report incorporating the complete discussion in this task, including the original product analysis, all
+follow-up questions, and the architecture/pilot-scope review feedback.
+
+Prepared for architecture and product planning
+Date: 25 July 2026
+Deployment assumption: customer-controlled on-premises environment
+
+    Executive conclusion: LiteLLM is the better gateway foundation, OpenLIT is the better
+    observability foundation, and a custom on-prem control plane is required for synchronous
+    spend enforcement, versioned policy governance, inline risk controls, fail-closed behavior,
+    and model/vendor approval.
+
+Consolidated discussion report | 25 July 2026  Page 1
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+1. Executive summary
+
+The proposed product is viable as an on-premises AI control plane, but neither open-source project alone is the
+complete product. LiteLLM should provide the model gateway and request-path data plane. OpenLIT should provide
+OpenTelemetry-based observability, traces, token and cost analytics, evaluations, prompts, and GPU visibility. A custom
+control plane should provide agent identity, lifecycle controls, a synchronous spend ledger, versioned policy approval,
+content-risk enforcement, model/vendor governance, auditability, and the single-window dashboard.
+
+    Recommended product positioning: an on-premises AI agent control plane for cost
+    governance, security policy, lifecycle management, and multi-provider accountability.
+
+The licensing situation is favorable for proprietary wrappers, subject to preserving notices and avoiding LiteLLM
+Enterprise source/features without a commercial license. There are no license-based request caps. Operational limits
+come from gateway policies, provider quotas, local infrastructure, and the capacity of the synchronous enforcement
+ledger.
+
+A four-week delivery is feasible only as a supervised, customer-controlled pilot with a completed Week 0 entry gate and
+deliberate descoping. It is not realistic to deliver a fully mature, multi-tenant, highly available enterprise platform with
+broad providers, cloud billing governance, complete compliance evidence, and extensive hardening in four weeks.
+
+2. Conversation history covered by this report
+
+Discussion item       Question or decision area                                Conclusion incorporated
+Original analysis     Can OpenLIT and LiteLLM support an on-prem
+                      custom AI gateway with cost governance, guardrails,      Use a hybrid architecture: LiteLLM as gateway, OpenLIT
+Licensing follow-up   agent caps, agent enablement, dashboards,                as observability, and a custom control plane as the
+                      provider/agent plugins, cloud add-ons, and market        product layer.
+Capacity follow-up    potential?
+                      Are there licensing restrictions for proprietary         OpenLIT is Apache 2.0. LiteLLM is MIT outside its
+Delivery follow-up    wrappers?                                                Enterprise directory. Preserve notices, audit
+                                                                               dependencies, and avoid Enterprise source/features
+Initial architecture  Are there request/rate-limit caps for on-prem            without a commercial license.
+review                deployment?
+                                                                               No universal product/license cap. LiteLLM supports
+Pilot scope review    Can a deployable customer product be ready in one        configurable budgets and rate limits; provider quotas and
+                      month?                                                   infrastructure are the real limits. OpenLIT is telemetry
+                                                                               infrastructure rather than a request gateway.
+                      Does the design address cumulative spend accuracy,
+                      policy lifecycle, content risk, dependency failure, and  Only as a supervised pilot after a Week 0 entry gate.
+                      model/vendor risk?                                       Start with the ledger and agent integration, use
+                                                                               Git-reviewed policy-as-code and OpenLIT/Grafana
+                      Is the four-week pilot schedule internally consistent    views, and defer bespoke approval/dashboard breadth.
+                      and operationally credible?
+                                                                               Revise the architecture to add a synchronous spend
+                                                                               ledger, versioned policies with approvals and rollback,
+                                                                               inline content guardrails, explicit fail-closed semantics
+                                                                               with break-glass controls, and a model/vendor risk
+                                                                               registry.
+
+                                                                               Reframe it as a supervised pilot with a Week 0 gate,
+                                                                               ledger-first sequencing, bounded streaming, selected
+                                                                               self-hostable guardrails, latency SLOs, agent ownership,
+                                                                               SBOM work, risk/descope controls, and measurable pilot
+                                                                               success.
+
+This report is a consolidated decision memo rather than a verbatim export of system messages, tool traces, or internal reasoning. It
+preserves the substance of every user question, answer, and review comment in the discussion.
+
+Consolidated discussion report | 25 July 2026                                                                                         Page 2
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+3. Product fit: LiteLLM versus OpenLIT
+
+Capability               LiteLLM                                                 OpenLIT
+Primary role
+Provider access          Open-source AI gateway and provider abstraction         Open-source AI engineering, observability,
+                         layer.                                                  evaluation, prompt, and telemetry platform.
+On-prem deployment
+Cost governance          Strong fit: unified OpenAI-compatible interface,        Integrates with and instruments many LLM
+                         provider translation, routing, retries, fallbacks, and  providers; not the primary request-routing layer.
+Guardrails               load balancing.
+Agent enable/disable
+Dashboard                Self-hosted proxy with database-backed keys,            Self-hosted platform using OpenLIT, ClickHouse,
+Cloud cost add-on        spend, and rate limiting.                               and OpenTelemetry Collector.
+
+                         Budgets and rate limits by proxy/key/user/team, plus    Cost and token measurement through telemetry,
+                         current agent/session controls. Hard cumulative         custom pricing, and dashboards; live enforcement
+                         enforcement requires a synchronous ledger wrapper.      must be added.
+
+                         Pre-call, post-call, moderation, PII, provider          SDK guardrails for prompt injection, sensitive topics,
+                         integrations, and custom hooks.                         and topic restriction; useful for detection and metrics.
+
+                         Keys can be blocked; agent lifecycle should be          Fleet Hub manages collectors, not business-agent
+                         owned by the custom control plane.                      lifecycle.
+
+                         Admin UI for keys, models, teams, and usage.            Flexible telemetry dashboards and SQL-backed
+                                                                                 visualization.
+
+                         Runtime cost estimates exist; actual billing            Telemetry/custom pricing exists; billing reconciliation
+                         reconciliation is custom.                               is custom.
+
+The design should avoid treating OpenLIT and LiteLLM as competing gateways. Their strongest roles are
+complementary.
+
+4. Recommended on-premises architecture
+
+The system should be divided into a request-path data plane, an administrative control plane, a synchronous
+enforcement ledger, and an observability/evidence plane. The evidence plane is for measurement and reconciliation; it
+must not be the authority for live cumulative budget decisions because telemetry can be delayed.
+
+                         Gateway + policy                                                       Cloud and local model
+
+AI agents                -> identity, budget, guardrails -> LiteLLM data plane ->               providers
+
+  Control plane agent                              Enforcement +
+    registry, policies,                        evidence sync spend
+
+approvals, RBAC, audit                            ledger; OpenLIT,
+                                                  OpenTelemetry,
+
+                                                     ClickHouse
+
+Layer                    Responsibilities                                                       Recommended foundation
+Data plane
+                         OpenAI-compatible ingress, authentication, provider routing, retries,  LiteLLM OSS plus a thin wrapper/plugin
+Control plane            fallbacks, inline pre/post guardrails, quotas, cost calculation, and   layer.
+                         model allowlists.
+Synchronous                                                                                     Custom product layer. Do not make the
+enforcement ledger       Agent registry, enable/disable status, identity, versioned policy      LiteLLM UI the long-term product
+                         bundles, approval workflow, RBAC, audit, and dashboard APIs.           boundary.
+
+                         Atomic reservations and commit/release operations for cumulative       Custom enforcement service backed by a
+                         agent, run, team, and environment budgets. Idempotency, lease          fast cache/transactional store such as
+                         expiry, and concurrency safety are required.                           Redis plus durable SQL.
+
+Consolidated discussion report | 25 July 2026                                                                                       Page 3
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+Layer                 Responsibilities                                                        Recommended foundation
+Evidence plane                                                                                OpenLIT, OpenTelemetry Collector, and
+                      Traces, token usage, cost, latency, errors, model comparisons,          ClickHouse.
+Model/vendor          evaluations, prompt versions, and GPU metrics. Reconciles to the
+governance            ledger but is not the live budget authority.                            Custom registry and signed policy bundle
+Failure semantics                                                                             in the control plane.
+                      Approved providers, models, versions, data classifications,
+Future billing plane  residency, terms, evaluations, deprecation dates, and risk              Custom control-plane policy and
+                      decisions.                                                              deployment runbook.
+
+                      Default fail closed for new requests when identity, policy, ledger, or  Separate cloud billing connector interface,
+                      required guardrail dependencies are unavailable. Use scoped,            added later.
+                      time-limited break-glass access with immutable audit.
+
+                      Import provider usage and invoices, normalize discounts and
+                      committed-use costs, and reconcile estimates to actual bills.
+
+5. Governance model and dashboard
+
+Every request should carry a trusted, gateway-validated identity context. Do not rely on a user-supplied agent identifier.
+Use a per-agent service identity or virtual key, and propagate a run/session ID through every LLM call, retry, tool call,
+and delegation. The gateway should reserve budget synchronously before forwarding the request; delayed OpenLIT
+telemetry must never be the only source used for a hard cap.
+
+Governance object     Minimum fields or controls
+Agent
+                      agent_id, owner, version, endpoint, status, data classification, approved models, guardrail profile, tool
+                      permissions.
+
+Budget                Daily/monthly dollar cap, per-run dollar cap, input/output token limits, iteration limit, concurrency,
+                      RPM/TPM, reservation ceiling, committed/released amount, and ledger sequence.
+
+Request identity      Agent identity, run_id, parent_run_id, user/team, environment, cost center, provider, model, prompt
+                      version.
+
+Cost event            Input tokens, output tokens, cache/reasoning tokens where available, estimated cost, billed cost, local
+                      inference cost, latency, retries, result status.
+
+Audit event           Who changed the policy, what changed, previous value, new value, approval, effective time, rollback
+                      version.
+
+Policy bundle         policy_id, version, draft/approved/effective/retired state, diff, author, approver, signature, effective time,
+                      expiry, and rollback target.
+
+Model/vendor profile  Provider, model and version, data classification, residency, retention, terms, evaluation status, deprecation
+                      date, approved use cases, and risk owner.
+
+Failure mode          Dependency, default action, fail-closed scope, break-glass role, reason, TTL, approver, and post-incident
+                      review.
+
+The dashboard should provide an agent control center, cost and token analytics, model economics, guardrail/risk views,
+model/vendor approval views, policy diffs and approvals, ledger health, break-glass activity, and audit/operations views.
+It should distinguish total spend from unit token price and from cost per successful task.
+
+For strict dollar caps, add atomic budget reservation before the request is forwarded. LiteLLM spend logging is
+documented as asynchronous after the response, which can otherwise permit overshoot under concurrency, retries,
+streaming, and telemetry lag. Reserve a conservative maximum, commit actual usage, release unused capacity, and
+reconcile the ledger to OpenLIT evidence by run ID.
+
+Content risk controls belong inline in the data plane: pre-call PII detection/redaction, prompt-injection and sensitive-topic
+checks, tool/MCP authorization, and post-call output filtering/DLP. A guardrail outage should fail closed for the affected
+data classification unless an approved break-glass policy applies.
+
+Consolidated discussion report | 25 July 2026                                                                                 Page 4
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+6. Licensing and distribution analysis
+
+Product                License boundary                  Implication for proprietary wrapper
+OpenLIT                Apache License 2.0.
+                                                         Commercial use, modification, embedding, on-prem distribution, and
+LiteLLM OSS            MIT outside the enterprise/       proprietary wrapper are generally permitted. Preserve license, copyright,
+LiteLLM Enterprise     directory.                        attribution, and NOTICE information; mark modified files.
+
+Third-party            Separate commercial license for   Commercial use, modification, embedding, and redistribution are
+dependencies           enterprise/ content and specific  generally permitted. Retain the MIT notice.
+Model providers        enterprise features.
+                                                         Do not copy or distribute Enterprise source or rely on Enterprise-only
+                       Each dependency may have its own  functionality without a commercial agreement.
+                       license.
+                                                         Generate an SBOM and include a complete third-party notices process
+                       Provider terms are separate from  in the customer distribution.
+                       open-source licenses.
+                                                         Review API quotas, proxy/resale rights, data handling, and
+                                                         model-specific terms for each provider.
+
+The licensing decision is manageable, but the exact LiteLLM version and feature set must
+be pinned before implementation. Open-source licensing does not grant rights to
+cloud-model APIs or provider data terms.
+
+7. Request caps, rate limits, and on-prem capacity
+
+Limit type             LiteLLM                                                   OpenLIT
+License-based request                                                            OpenLIT advertises no self-hosted usage limits.
+cap                    No license-based cap in the MIT OSS portion.
+Gateway RPM/TPM                                                                  Not a gateway function.
+Dollar budgets         Configurable by server, key, user, team, and
+                       agent/session in current documentation.                   Reports/estimates cost; does not provide the primary
+Cumulative spend                                                                 request-path budget enforcement.
+authority              Global, key/user/team, and current agent/session
+Provider quota         controls. Wrap with atomic reservation for strict         Telemetry is evidence and reconciliation, not the live
+On-prem capacity       cumulative enforcement.                                   spend authority.
+
+Local model economics  Custom synchronous ledger must reserve before             Not applicable to OpenLIT itself.
+                       forwarding, commit actual usage, release unused
+Failure behavior       reservation, and reconcile delayed evidence.              Collector throughput, ClickHouse ingestion/storage,
+                                                                                 trace cardinality, content capture, and retention
+                       Still applies. Routing and fallbacks can spread traffic   determine capacity.
+                       but cannot increase provider quota.                       GPU and system metrics can support internal cost
+                                                                                 allocation.
+                       Gateway CPU, memory, database, Redis, network,
+                       and provider latency determine throughput.                Evidence-plane outage must not bypass the
+                                                                                 synchronous ledger; buffer or degrade telemetry
+                       Do not confuse zero financial price with unlimited        separately.
+                       usage. Token, iteration, concurrency, and GPU
+                       budgets still matter.
+
+                       Identity, policy, ledger, and required guardrail outages
+                       should fail closed for new requests; break-glass must
+                       be scoped, time-limited, and audited.
+
+For an on-premises customer, capacity must be measured using the customer's actual models, request sizes,
+concurrency, provider latency, and retention policy. There is no responsible universal RPS number without that workload
+profile. The synchronous ledger itself needs a capacity target and failure test because it sits on the request path.
+
+OpenLIT's telemetry path should be protected with message redaction, content truncation, sampling, batching, and
+retention controls. The current SDK documentation shows message-content capture enabled by default and no default
+
+Consolidated discussion report | 25 July 2026                                             Page 5
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+maximum content length. Content capture should be policy-controlled and should not be enabled for sensitive
+classifications without an explicit decision.
+
+8. Market potential and differentiation
+
+The opportunity is real, but the gateway layer alone is increasingly commoditized. LiteLLM already covers much of the
+basic provider abstraction and gateway functionality. The stronger commercial product is the regulated-enterprise
+control plane around agents, budgets, security, audit, and cost reconciliation.
+
+Signal                                                                          Relevance
+
+McKinsey: 62% of respondents were at least experimenting with AI agents, while  There is a gap between experimentation and governed
+nearly two-thirds had not begun scaling AI enterprise-wide.                     production deployment.
+
+Deloitte: 78% planned to increase AI investment; 69% expected full governance   Governance is a material enterprise program, not a
+implementation to take at least a year.                                         minor gateway feature.
+
+OpenAI: enterprise usage, weekly messages, and reasoning-token consumption      Token/cost visibility will become more important as
+were increasing rapidly in its 2025 customer data.                              workflows become agentic and multi-step.
+
+The best initial customers are banking, healthcare, government, defense, manufacturing, and large enterprises
+operating private data centers or sensitive workflows. The likely buyer set includes platform engineering, AI Centers of
+Excellence, security, FinOps, and CFO organizations.
+
+Potential differentiation: air-gapped/on-prem deployment, trusted agent identity, per-run hard budget enforcement,
+versioned policy approvals, inline content-risk controls, model/vendor risk decisions, tool/MCP governance, auditability,
+and later cloud invoice reconciliation. A reskinned LiteLLM dashboard would be much harder to defend.
+
+9. Four-week supervised pilot feasibility
+
+Verdict: four weeks is defensible only as a supervised pilot after a completed Week 0 entry
+gate and deliberate descoping. Without those conditions, the scope is a 6-8 week effort, not
+a four-week delivery.
+
+This is a customer-controlled pilot, not a production-grade platform. The operating posture is fail-closed for new requests
+when identity, policy, ledger, or required guardrail dependencies are unavailable; there is no HA/DR in the pilot.
+Proposed pilot SLA: 99% availability during agreed business hours, business-hours support, and no 24x7 production
+commitment. The customer accepts request rejection during maintenance or dependency outages.
+
+Week 0 entry gate - required before the four-week clock starts:
+
+Gate decision          Required evidence before Week 1
+
+Deployment and access  Exact Kubernetes/Docker, air-gapped or restricted-egress target; reachable environment; secrets path;
+                       outbound destinations; backup location; named customer operator.
+
+Workload and SLO       Peak concurrency, prompt/output sizes, streaming usage, provider mix, data classifications, pilot traffic
+                       target, and the proposed p95 gateway overhead budget.
+
+Identity and agents    OIDC/reverse-proxy decision, three named pilot agents, agent framework owners, integration contract for
+                       run_id propagation, and sample test traffic.
+
+Models and guardrails  Approved local/remote providers, model/version allowlist, one selected self-hostable guardrail engine such
+                       as a Presidio-class PII analyzer, and agreed false-positive handling.
+
+Release and licensing  Pinned OSS versions, dependency inventory, SBOM/NOTICE owner, Git repository and PR reviewers for
+                       policy-as-code, and pilot acceptance owner.
+
+Consolidated discussion report | 25 July 2026                                                                                     Page 6
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+Pilot boundary:
+
+Pilot target         Bounded scope
+Customer scope       One customer, one controlled environment, one deployment shape, and one named pilot operator.
+
+Agents               Three named agents at most: HR, Finance Reconciliation, and Coding. Each agent has an owned adapter
+                     for identity and run correlation.
+
+Providers            One local model endpoint plus one approved remote provider if egress is permitted. Third and fourth
+                     providers are deferred.
+
+Policy and approval  Signed policy-as-code in the customer's Git repository; PR review is the approval workflow. Custom
+                     approval UI is deferred.
+
+Dashboard            OpenLIT/Grafana views for telemetry and cost evidence plus a thin custom agent-status/enable-disable
+                     page. Bespoke cost and governance dashboard is deferred.
+
+Guardrails           One self-hostable PII engine plus deterministic injection, tool-authorization, and output rules. Broader
+                     model-based guardrail coverage is deferred.
+
+Deferred             Cloud billing, broad multi-tenancy, extensive self-service, advanced compliance reporting, HA/DR, and full
+                     provider breadth.
+
+A credible team is approximately three to five experienced engineers: one platform engineer dedicated to the ledger and
+gateway path, one engineer for agent adapters and control-plane configuration, one frontend/observability engineer,
+DevOps/SRE support, and part-time security support. The customer owns agent-side code changes and provides an
+operator; the gateway team owns the integration contract and enforcement path.
+
+Critical-path semantics:
+
+ - Ledger first: reserve an upper-bound cost before forwarding, commit actual usage, release unused capacity, and make
+    reserve/commit/release idempotent with lease expiry. OpenLIT evidence reconciles the ledger but never replaces it.
+
+ - Streaming: every request must provide max_tokens or receive an agent-specific default ceiling; unbounded streams are
+    rejected. Reserve input estimate plus the output ceiling, commit at stream end, release unused capacity, and terminate
+    the stream with an explicit budget event if the reservation is exhausted.
+
+ - Latency SLO: measure provider-free overhead separately. Proposed pilot pass target is p95 <= 150 ms and p99 <= 300
+    ms for ledger, policy, and guardrail processing on prompts up to 8K input tokens, plus no more than 10% overhead for
+    calls whose provider latency exceeds 1.5 seconds. Tune the target at the Week 0 baseline.
+
+ - Guardrails: no hosted moderation dependency is assumed for air-gapped operation. The selected self-hostable engine
+    and false-positive/override behavior must be demonstrated before Week 2 closes.
+
+ - Agent integration: the gateway team publishes the run_id/parent_run_id contract in Week 0; each agent owner
+    implements and tests propagation through LLM calls, retries, tools, and delegation in Weeks 1-3.
+
+Suggested sequence:
+
+ - Week 0: complete the entry gate; freeze the workload, SLO, deployment, identities, approved providers/models,
+    guardrail engine, OSS versions, SBOM process, owners, and Git policy repository.
+
+ - Week 1: build and load-test the synchronous ledger first; implement reserve/commit/release, idempotency, lease expiry,
+    streaming ceilings, minimal LiteLLM wrapper, one provider/local endpoint, and one agent adapter.
+
+ - Week 2: add trusted identity, enable/disable, signed Git policy bundles, model allowlists, minimal self-hostable
+    guardrails, and the second agent adapter. End with a midpoint checkpoint: ledger and agent correlation must work
+    under representative load or the delivery moves to 6-8 weeks.
+
+ - Week 3: integrate the remaining pilot agent, OpenLIT/Grafana cost evidence, thin status page, reconciliation, second
+    provider if allowed, latency measurement, and targeted security tests. No custom approval UI or broad dashboard build.
+
+ - Week 4: run focused concurrency, streaming, outage, rollback, backup/restore, SBOM/notice, and customer acceptance
+    tests; package the deployment; hand over the runbook; and start supervised pilot traffic.
+
+Consolidated discussion report | 25 July 2026                                                                                  Page 7
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+Risk register and descope order:
+
+Risk                         Owner / trigger                   Mitigation and decision
+
+Ledger hot-path capacity or  Platform lead; reserve/commit     Dedicated Week 1 owner, representative load test, fail closed. Do not
+correctness                  failures or p95 breach.           descope the ledger; move the date if it fails.
+
+Guardrail latency or false   Security owner; latency or        Use one self-hostable engine and narrow rules first. Cut guardrail
+positives                    override rate exceeds Week 0      breadth before identity, budget, or audit.
+                             target.
+
+Agent framework integration  Agent owners; run IDs missing     Use a thin adapter and contract tests. Reduce agent count if needed;
+                             through tools/retries.            do not claim three agents are integrated without correlation evidence.
+
+No HA with fail-closed       Customer operator; ledger/policy  Publish the pilot SLA, maintenance procedure, business-hours support,
+behavior                     outage rejects traffic.           and incident runbook. HA/DR is explicitly outside pilot scope.
+
+Provider or licensing slip   Release owner; provider access    Start with one local and one approved provider. Complete license
+                             or SBOM/NOTICE incomplete.        inventory in Week 0; defer third/fourth provider first.
+
+Descope order if the midpoint slips: custom dashboard -> custom approval UI (retain Git PR
+approval) -> guardrail breadth -> third/fourth provider -> reduce agent count. Do not cut
+synchronous budget enforcement, trusted identity, fail-closed semantics, audit, or agent
+correlation.
+
+Minimum pilot acceptance criteria:
+
+ - Every pilot request is attributed to agent, run, user/team, provider, model, tokens, and cost, including retries, tools, and
+    delegation.
+
+ - Ledger hard caps show zero overshoot in concurrency, retries, fallbacks, streaming, and delayed telemetry tests;
+    reservation release and idempotency are verified.
+
+ - Requests without max_tokens are bounded by an agent default; exhausted streaming reservations terminate with an
+    auditable budget event.
+
+ - Gateway/policy/ledger/guardrail outages fail closed for new requests, while evidence-plane outages do not bypass
+    enforcement. Break-glass is time-limited and audited.
+
+ - Policy changes use Git PR approval, immutable diffs, effective versions, and rollback; no bespoke approval UI is
+    required for the pilot.
+
+ - The selected self-hostable guardrail engine meets the Week 0 latency target and has documented false-positive
+    handling and redaction behavior.
+
+ - The pilot meets the proposed p95 overhead budget and has a named operator, business-hours support path, outage
+    runbook, and backup/restore test.
+
+ - The delivered image includes pinned versions, SBOM, third-party notices, deployment instructions, and rollback
+    instructions.
+
+Pilot success is measured separately from feature acceptance: default target is five consecutive business days of
+supervised traffic and at least 1,000 requests, or the customer's agreed equivalent, with zero hard-cap overshoots, no
+unresolved Sev-1 security incident, and the p95 overhead target met. If the target is not reached, the result is a pilot
+extension or 6-8 week plan, not a claim of production readiness.
+
+Consolidated discussion report | 25 July 2026                                                                                      Page 8
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+10. Final recommendation
+
+Proceed with a hybrid architecture and call the first release a four-week supervised pilot, not a production platform. Use
+LiteLLM OSS for the gateway foundation and OpenLIT OSS/Grafana for observability, keep the custom control plane
+thin, and use Git-reviewed policy-as-code instead of building approval and dashboard breadth during the pilot. The initial
+review is correct that the ledger and agent integration are the critical path.
+Before the four-week clock starts, obtain these decisions from the customer:
+
+ - Exact deployment target: Kubernetes, Docker, air-gapped, or restricted-egress environment.
+ - Expected peak concurrent requests, average prompt/output sizes, and monthly request volume.
+ - Approved model providers and whether sensitive prompts may leave the premises.
+ - Data classifications, model/vendor approval criteria, version/deprecation policy, and permitted break-glass behavior.
+ - Identity integration: OIDC/LDAP/reverse proxy and required RBAC roles.
+ - Pilot acceptance criteria, especially hard dollar caps, streaming behavior, p95 overhead, guardrail behavior, outage
+
+    semantics, audit, backup/restore, and rollback.
+
+    Go/no-go rule: do not start Week 1 until the Week 0 entry gate is signed off. If the ledger,
+    agent correlation, or representative latency target is not demonstrated at the end of Week 2,
+    replan as a 6-8 week delivery.
+
+Consolidated discussion report | 25 July 2026  Page 9
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+References
+
+[1] OpenLIT repository license - Apache License 2.0
+    https://github.com/openlit/openlit/blob/main/LICENSE
+
+[2] OpenLIT pricing and self-hosted usage statement
+    https://openlit.io/pricing
+
+[3] LiteLLM repository license - MIT outside enterprise directory
+    https://github.com/BerriAI/litellm/blob/main/LICENSE
+
+[4] LiteLLM enterprise directory licensing notice
+    https://github.com/BerriAI/litellm/blob/main/enterprise/README.md
+
+[5] LiteLLM budgets and rate limits documentation
+    https://docs.litellm.ai/docs/proxy/users
+
+[6] LiteLLM request architecture and asynchronous post-request accounting
+    https://docs.litellm.ai/docs/proxy/architecture
+
+[7] LiteLLM Admin UI quick start
+    https://docs.litellm.ai/docs/proxy/ui
+
+[8] LiteLLM spend tracking and model pricing
+    https://docs.litellm.ai/docs/proxy/cost_tracking
+
+[9] LiteLLM guardrails quick start
+    https://docs.litellm.ai/docs/proxy/guardrails/quick_start
+
+[10] OpenLIT self-hosting architecture
+    https://docs.openlit.io/latest/openlit/installation
+
+[11] OpenLIT platform overview
+    https://docs.openlit.io/latest/overview
+
+[12] OpenLIT anonymous usage metrics and opt-out
+    https://docs.openlit.io/latest/openlit/developer-resources/anonymous-telemetry
+
+[13] OpenLIT SDK configuration, content capture, and truncation
+    https://docs.openlit.io/latest/sdk/configuration
+
+[14] LiteLLM custom pricing and zero-cost model behavior
+    https://github.com/BerriAI/litellm/blob/main/docs/my-website/docs/proxy/custom_pricing.md
+
+[15] McKinsey: The state of AI in 2025
+    https://www.mckinsey.com/capabilities/quantumblack/our-insights/the-state-of-ai
+
+[16] Deloitte: State of Generative AI in the Enterprise
+    https://www2.deloitte.com/us/en/pages/about-deloitte/articles/press-releases/state-of-generative-ai.html
+
+[17] OpenAI: The state of enterprise AI 2025
+    https://openai.com/business/guides-and-resources/the-state-of-enterprise-ai-2025-report/
+
+Consolidated discussion report | 25 July 2026                                                                 Page 10
+ON-PREM AI GATEWAY AND AGENT GOVERNANCE
+
+Appendix A. Full discussion record
+
+The following records the complete user-request sequence and the substantive answer delivered for each stage.
+
+Stage                        Substance of the discussion
+User request 1
+Answer 1                     Analyze OpenLIT and LiteLLM for an on-prem custom AI gateway. Cover open-source licensing and rate limits,
+                             cost governance, guardrails, agent-level cost caps, enable/disable controls, one-window dashboard,
+User request 2               provider/agent plug-ins, cloud governance as an add-on, and market potential.
+Answer 2
+User request 3               Recommended LiteLLM as the enforcement-capable gateway/data plane, OpenLIT as the observability/evidence
+Answer 3                     plane, and a custom control plane for agent registry, lifecycle, budgets, identity, audit, and a unified dashboard.
+                             Proposed provider and billing connector interfaces, hard-cap reservation, security/egress caveats, market
+Initial review feedback      positioning, and a customer pilot strategy.
+Revision response
+Pilot scope review           Ask specifically whether either product has licensing restrictions.
+feedback
+Revision response 2          OpenLIT is Apache 2.0 and generally permits commercial use, modification, proprietary wrappers, and on-prem
+                             distribution with notice/attribution obligations. LiteLLM is MIT outside its enterprise directory; enterprise source
+                             and some features require a commercial license. Provider terms and dependency licenses remain separate.
+
+                             Ask about request/rate-limit caps for on-prem deployment and whether a working deployable product can be
+                             delivered to a real customer in one month using open-source versions with enterprise-grade functionality on top.
+
+                             No universal license-based request caps were identified. LiteLLM supports configurable global, key, user, team,
+                             and agent/session limits, while provider quotas and infrastructure determine actual throughput. OpenLIT is
+                             telemetry infrastructure and is limited by Collector/ClickHouse capacity rather than gateway RPM/TPM. One
+                             month is feasible for a bounded production pilot with approximately three to five experienced engineers, but not
+                             for a fully mature enterprise platform with broad scope.
+
+                             Identify gaps: budgets may overshoot when telemetry is delayed; policy versioning and approval are absent;
+                             content-level risk controls are not shown; custom control-plane failure behavior is unspecified; and model/vendor
+                             risk assessment is missing.
+
+                             Added a synchronous spend ledger with atomic reservation and reconciliation, versioned policy bundles with
+                             approval/diff/rollback, inline PII/injection/output/tool guardrails, explicit fail-closed defaults with scoped
+                             break-glass, and model/vendor profiles tied to data classification, terms, evaluations, and deprecation.
+
+                             The four-week plan was internally inconsistent: Week 2 contained the whole product; go/no-go decisions were
+                             too late; fail-closed/no-HA availability was unstated; acceptance criteria had no buffer; streaming, guardrail
+                             engines, latency, agent integration, licensing, risk ownership, descoping, and pilot success were underspecified.
+
+                             Renamed the deliverable a four-week supervised pilot; moved customer decisions to a Week 0 entry gate; made
+                             the ledger and agent adapters the critical path; specified bounded streaming reservations, self-hostable guardrail
+                             selection, p95 overhead targets, Git-reviewed policy-as-code, SBOM/NOTICE work, a midpoint checkpoint, risk
+                             register, descope order, business-hours/no-HA pilot SLA, and measurable success criteria.
+
+End of consolidated report.
+
+Consolidated discussion report | 25 July 2026                                                                  Page 11
+

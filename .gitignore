@@ -1,0 +1,7 @@
+docs/source/*.docx
+docs/source/*.pptx
+docs/source/*.pdf
+.env
+__pycache__/
+.venv/
+*.pyc
