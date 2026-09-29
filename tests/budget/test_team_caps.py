@@ -21,7 +21,10 @@ def test_parallel_requests_across_keys_never_exceed_team_cap(guarded, record):
 
     async def go():
         async with httpx.AsyncClient(timeout=120) as c:
-            return await gather_limited([guarded.chat(c, keys[i % 3], max_tokens=100) for i in range(90)])
+            # T8: one request per key first, so the team's spend really comes from several keys (under load the
+            # key without a key budget, which reserves less, used to win every race of the burst)
+            first = [await guarded.chat(c, k, max_tokens=100) for k in keys]
+            return first + await gather_limited([guarded.chat(c, keys[i % 3], max_tokens=100) for i in range(3, 90)])
     rs = asyncio.run(go())
     ok = [r for r in rs if r.status_code == 200]
     total = sum(resp_cost(r) for r in ok)

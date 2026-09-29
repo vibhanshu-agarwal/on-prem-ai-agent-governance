@@ -38,7 +38,11 @@ def test_router_retries_bill_once_and_never_overshoot(guarded, record):
         assert abs(resp_cost(r) - cost("mock-local", 7, 100)) < 1e-12
     assert total <= CAP + EPS
     assert abs(guarded.counter("key", key.token) - total) < 1e-9
-    assert all(r.status_code in (200, 429) for r in rs), [r.text[:200] for r in rs if r.status_code not in (200, 429)]
+    # T8: with 1 dead + 1 live deployment and random routing, 4 attempts all land on the dead one with p = 1/16 per
+    # request, so over 15 requests an exhausted-retries 500 is expected about half the time (it cost nothing:
+    # the counter check above equals the billed total). Anything else is a real error.
+    exhausted = lambda r: r.status_code == 500 and "Connection error" in r.text  # noqa: E731
+    assert all(r.status_code in (200, 429) or exhausted(r) for r in rs),         [r.text[:200] for r in rs if r.status_code not in (200, 429) and not exhausted(r)]
 
 
 def test_concurrent_retries_never_overshoot(guarded, record):
