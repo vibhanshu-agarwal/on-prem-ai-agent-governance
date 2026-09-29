@@ -140,12 +140,15 @@ def account_orphans(orphans: dict[str, list[dict]], records: Iterable[dict], *, 
     starts: dict[str, dict] = {}
     ends: dict[str, dict] = {}
     agent_starts: dict[str, list[dict]] = collections.defaultdict(list)
+    last_seen: dict[str, float] = {}                     # boot -> its latest record: a process that kept writing
     def keep(table: dict, r: dict) -> None:
         cur = table.get(r.get("run_id"))
         if cur is None or (cur.get("source") == "docker-logs" and r.get("source") != "docker-logs"):
             table[r.get("run_id")] = r          # the same run can be in both sources: the journal's record wins
 
     for r in sorted(records, key=lambda r: r.get("ts") or 0):
+        if r.get("boot") is not None:
+            last_seen[r["boot"]] = max(last_seen.get(r["boot"], 0), r.get("ts") or 0)
         ev = r.get("event")
         if ev == "run.start":
             keep(starts, r)
@@ -189,8 +192,13 @@ def account_orphans(orphans: dict[str, list[dict]], records: Iterable[dict], *, 
                         "ended": en.get("ts"), "refused_request_run": gw.get("request_run_id")})
             continue
         t0 = ev.get("started") or 0
-        replaced = st is not None and any((a.get("ts") or 0) > t0 and a.get("boot") != st.get("boot")
-                                          for a in agent_starts.get(rec.get("agent_id"), []))
+        # replaced: another process of the same agent started after the run AND the run's own process wrote nothing
+        # after that start (a second process running concurrently as the same agent, e.g. a live-test container, is
+        # not a replacement: the original is still alive and its run is still open)
+        replaced = st is not None and any(
+            (a.get("ts") or 0) > t0 and a.get("boot") != st.get("boot")
+            and last_seen.get(st.get("boot"), 0) <= (a.get("ts") or 0)
+            for a in agent_starts.get(rec.get("agent_id"), []))
         if replaced:
             out.append({**ev, "state": "interrupted", "reason": "the agent process was replaced before the run ended"})
         elif now - t0 < in_flight_s:

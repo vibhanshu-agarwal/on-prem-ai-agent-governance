@@ -211,6 +211,17 @@ def test_a_process_that_started_after_the_run_does_not_make_it_interrupted_unles
     assert got["p"]["state"] == "unaccounted"
 
 
+def test_a_concurrent_process_of_the_same_agent_is_not_a_replacement_of_one_that_kept_running():
+    # b2 (e.g. a live-test container running as the same agent) starts while b1 is alive and keeps writing:
+    # b1's open run is not "interrupted", it is unaccounted; once b1 falls silent before a later start, it is
+    base = [rec("agent.start", "-", NOW - 900, boot="b1"), rec("run.start", "p", NOW - 800, boot="b1"),
+            rec("agent.start", "-", NOW - 700, boot="b2"),
+            rec("run.start", "later", NOW - 650, boot="b1"), rec("run.end", "later", NOW - 649, boot="b1", status="ok")]
+    assert account({"p": [child()]}, base)["p"]["state"] == "unaccounted"
+    got = account({"p": [child()]}, base + [rec("agent.start", "-", NOW - 300, boot="b3")])
+    assert got["p"]["state"] == "interrupted"
+
+
 def test_summary_counts_and_lists_only_the_unaccounted():
     ev = RJ.account_orphans({"a": [child()], "b": [child()], "c": [child()]}, [
         rec("run.start", "a", NOW - 9), rec("run.end", "a", NOW - 8, status="error",
