@@ -37,11 +37,27 @@ services:
       timeout: 5s
       retries: 30
 
+  # T8: the base file gained Presidio (T5) and the telemetry network (T6/T8). The isolated stack
+  # measures the budget guard only: Presidio is not started here (it would clash with the shared
+  # gov-presidio-* container names and cost ~3 GB), the guardrail hook is loaded but disabled
+  # (GOVGUARD_ENABLED=false, as in T5's A/B baseline gateway), t2stack.py drops the "otel" callback,
+  # and `obs` is a private network so test traffic never reaches the shared dashboard.
+  presidio-analyzer:
+    profiles: [t2-unused]
+  presidio-anonymizer:
+    profiles: [t2-unused]
+
   gateway:
     container_name: t2-gateway
     restart: "no"
-    depends_on:
+    depends_on: !override
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      mock-local: {condition: service_healthy}
+      mock-remote: {condition: service_healthy}
       mock-runaway: {condition: service_healthy}
+    environment:
+      GOVGUARD_ENABLED: "false"
     volumes:
       - ../.local/t2/config.guarded.yaml:/app/config.yaml:ro
 
@@ -90,3 +106,6 @@ networks:
     name: govpilot_t2_backend
   edge:
     name: govpilot_t2_edge
+  obs:
+    name: govpilot_t2_obs
+    external: false

@@ -8,6 +8,10 @@ bash scripts/gen-env.sh
 set -a; . deploy/.env; set +a
 export GATEWAY_URL="http://127.0.0.1:${GATEWAY_PORT:-4000}"
 
+# the gateway joins the telemetry network (shared, external to every compose project)
+docker network inspect govpilot_obs >/dev/null 2>&1 || docker network create govpilot_obs >/dev/null
+mkdir -p .local/guardrails
+
 echo ">> docker compose up (build + wait for healthy)"
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build --wait --wait-timeout 300
 

@@ -58,6 +58,8 @@ def build_configs() -> tuple[dict, dict]:
     g["general_settings"]["proxy_batch_write_at"] = LAG_SECONDS
     assert "callbacks.budget_guard.budget_guard" in (g.get("litellm_settings", {}).get("callbacks") or []), \
         "deploy/litellm/config.yaml must wire the budget guard"
+    # T8: no telemetry export from the isolated stack (it has no OpenLIT; see docker-compose.t2.yml)
+    g["litellm_settings"]["callbacks"] = [c for c in g["litellm_settings"]["callbacks"] if c != "otel"]
     n = copy.deepcopy(g)
     n["litellm_settings"].pop("callbacks", None)
     return g, n

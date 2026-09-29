@@ -2,9 +2,9 @@
 
 Creates (idempotently) three throwaway `demo-*` virtual keys with small budgets, one per team, tagged
 with metadata {agent_id, team}, then sends a mix of calls (models, streaming, sizes) through the
-OTel-enabled gateway twin. It never touches the real agents' keys or budgets.
+gateway (which exports OTel spans to OpenLIT). It never touches the real agents' keys or budgets.
 
-    .venv/Scripts/python deploy/observability/demo_traffic.py [--gateway http://127.0.0.1:4200] [--rounds 12]
+    .venv/Scripts/python deploy/observability/demo_traffic.py [--gateway http://127.0.0.1:4000] [--rounds 12]
 
 Stdlib only. The master key is read from deploy/.env (generated locally, gitignored).
 """
@@ -69,7 +69,7 @@ def ensure_keys(base: str, master: str) -> dict[str, str]:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gateway", default="http://127.0.0.1:4200")
+    ap.add_argument("--gateway", default="http://127.0.0.1:4000")
     ap.add_argument("--admin", default="http://127.0.0.1:4000", help="where to mint the demo keys")
     ap.add_argument("--rounds", type=int, default=12)
     a = ap.parse_args()

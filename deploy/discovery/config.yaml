@@ -48,7 +48,7 @@ feeds:
     ignore_agent_id_prefixes: []
     access_log:
       type: docker_logs
-      containers: [gov-gateway, gov-gateway-otel]
+      containers: [gov-gateway]
     call_records:
       type: clickhouse
       url: http://gov-obs-clickhouse:8123

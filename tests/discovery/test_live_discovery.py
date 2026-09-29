@@ -2,7 +2,7 @@
 spend nothing; a noisy feed is capped.
 
 Needs: T1 stack, control plane, gov-discovery (scripts/discovery-up.sh). The gateway-key test also needs the
-OTel-enabled gateway twin (scripts/observability-up.sh gateway-demo); the eBPF test needs the OpenLIT Controller
+observability stack (the real gateway exports OTel spans to it since T8); the eBPF test needs the OpenLIT Controller
 (scripts/observability-up.sh ebpf) and DNS for api.openai.com (it only opens a TCP connection, no request is sent).
 """
 from __future__ import annotations
@@ -128,8 +128,8 @@ def test_registered_agent_workloads_are_not_proposed(alice, reject_after):
 
 
 def test_gateway_key_that_is_not_in_the_register_is_proposed(alice, reject_after):
-    if not _running("gov-gateway-otel"):
-        pytest.skip("OTel-enabled gateway twin not running (scripts/observability-up.sh gateway-demo)")
+    if not _running("gov-obs-clickhouse"):
+        pytest.skip("observability stack not running (scripts/observability-up.sh)")
     alias = _uid("t6-shadow-key")
     gw = cpclient.gw_admin()
     r = gw.post("/key/generate", json={"key_alias": alias, "max_budget": 0.05,
@@ -138,7 +138,7 @@ def test_gateway_key_that_is_not_in_the_register_is_proposed(alice, reject_after
     key = r.json()["key"]
     try:
         for _ in range(3):
-            resp = httpx.post("http://127.0.0.1:4200/v1/chat/completions", timeout=30,
+            resp = httpx.post("http://127.0.0.1:4000/v1/chat/completions", timeout=30,
                               headers={"Authorization": f"Bearer {key}"},
                               json={"model": "mock-local", "max_tokens": 8, "messages": [{"role": "user", "content": "hi"}]})
             assert resp.status_code == 200, resp.text

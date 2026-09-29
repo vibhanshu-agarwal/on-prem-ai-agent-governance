@@ -92,7 +92,10 @@ litellm_settings:
   # T4 run attribution (deploy/litellm/callbacks/run_attribution.py): stamps run/parent run/agent/team
   # into the spend logs; rejects requests without a run id for keys whose metadata says
   # attribution.mode=enforce (default mode: audit).
-  callbacks: ["callbacks.budget_guard.budget_guard", "callbacks.run_attribution.run_attribution", "callbacks.guardrails_hook.guardrails_hook"]
+  callbacks: ["callbacks.budget_guard.budget_guard", "callbacks.run_attribution.run_attribution", "callbacks.guardrails_hook.guardrails_hook", "otel"]
+  # T6/T8: "otel" exports one span per call (cost, tokens, key metadata, run id) to OpenLIT
+  # (OTEL_* env in deploy/docker-compose.yml, network govpilot_obs). The export is asynchronous:
+  # an OpenLIT/ClickHouse outage does not block or bypass enforcement (tests/acceptance).
   # T5 guardrails (deploy/litellm/callbacks/guardrails_hook.py + services/guardrails, policy in
   # deploy/guardrails/guardrails.yaml): PII (Presidio), injection/tool/secret rules, approval gate.
   # T2: keep Redis spend counters alive for the whole budget period (>= budget_duration 30d).

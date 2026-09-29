@@ -7,6 +7,8 @@
 #   edge       normal bridge. Only `gateway` joins it, purely so Docker can publish
 #              the gateway port to 127.0.0.1 (internal networks cannot publish ports)
 #              and so the gateway could later reach approved remote providers.
+#   obs        telemetry network (external, owned by no project; scripts create it). Only the
+#              gateway (OTLP export) and the observability stack join it.
 name: govpilot
 
 x-healthcheck-defaults: &hc
@@ -141,6 +143,11 @@ services:
       LITELLM_LOG: INFO
       LITELLM_MODE: PRODUCTION       # do not auto-load a .env file / dev conveniences
       LITELLM_TELEMETRY: "False"
+      # T6/T8: OpenTelemetry export of every call to OpenLIT (evidence plane; "otel" callback in config.yaml).
+      # Asynchronous batch export: if OpenLIT is down, spans are dropped, requests and enforcement are unaffected.
+      OTEL_EXPORTER: otlp_http
+      OTEL_ENDPOINT: http://openlit:4318
+      OTEL_SERVICE_NAME: govpilot-gateway
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
       - ./litellm/callbacks:/app/callbacks:ro   # custom callbacks (T2 budget guard; T4 attribution; T5 guardrails)
@@ -155,6 +162,7 @@ services:
       providers: {}
       backend: {}
       edge: {}
+      obs: {}          # telemetry only (OTLP to openlit:4318); agents never join it
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness',timeout=3)"]
       interval: 5s
@@ -174,6 +182,9 @@ networks:
     internal: true
   edge:
     name: govpilot_edge
+  obs:                 # shared with deploy/compose.observability.yml; created by scripts/up.sh / bootstrap.sh
+    name: govpilot_obs
+    external: true
 
 volumes:
   pgdata:
