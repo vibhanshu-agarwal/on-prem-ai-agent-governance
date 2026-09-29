@@ -211,7 +211,7 @@ def _money(x: float) -> str:
 
 
 def print_table(rows: list[dict], cols: list[tuple[str, str]], out=sys.stdout) -> None:
-    cells = [[str(r.get(k, "")) if not isinstance(r.get(k), float) else _money(r[k]) for k, _ in cols] for r in rows]
+    cells = [[("-" if r.get(k) in (None, "") else str(r[k])) if not isinstance(r.get(k), float) else _money(r[k]) for k, _ in cols] for r in rows]
     w = [max([len(h)] + [len(c[i]) for c in cells]) for i, (_, h) in enumerate(cols)]
     print("  ".join(h.ljust(w[i]) for i, (_, h) in enumerate(cols)), file=out)
     for c in cells:

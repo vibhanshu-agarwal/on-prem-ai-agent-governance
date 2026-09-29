@@ -70,7 +70,7 @@ services:
       BROKER_URL: http://delegation-broker:8090
       FIN_CHILD_BUDGET_USD: ${FINANCE_CHILD_BUDGET_USD:-0.2}
       FIN_CHILD_MODELS: ${FINANCE_CHILD_MODELS:-mock-local}
-      FIN_CHILD_TTL_S: ${FINANCE_CHILD_TTL_S:-3600}
+      FIN_CHILD_TTL_S: ${FINANCE_CHILD_TTL_S:-86400}
     labels:
       govpilot.agent_id: finance-recon-agent
       govpilot.team: finance

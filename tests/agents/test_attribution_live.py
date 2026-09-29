@@ -364,9 +364,15 @@ def test_rogue_rate_profile_burns_the_budget_and_the_gateway_refuses_the_rest(tm
         assert len(refused) >= 10, "the gateway did not refuse the rogue agent"
         c.stop(timeout=3)
         ev = L.events_of(c)
-        roots = roots_of(ev)
         reached = [e for e in ev if e["event"] == "llm.attempt" and e["http_status"] is not None]
-        rows = L.rows_for_roots(roots, since, expected=len(reached), timeout=90)
+        deadline = time.time() + 90
+        rows: list[dict] = []
+        while time.time() < deadline:                       # every request of this agent, refused ones included
+            rows = [r for r in L.fetch_rows(since) if r["agent"] == alias]
+            if len(rows) >= len(reached):
+                break
+            time.sleep(3)
+        assert len(rows) == len(reached), (len(rows), len(reached))
         spent = sum(r["cost_usd"] for r in rows)
         info = L.admin().get("/key/info", params={"key": key}).json()["info"]
         ok_rows = sorted((r for r in rows if r["status"] == "success"), key=lambda r: r["ts"])
@@ -374,11 +380,17 @@ def test_rogue_rate_profile_burns_the_budget_and_the_gateway_refuses_the_rest(tm
                                      f"{len(ok_rows)} ok rows; last: " + "; ".join(
             f"{r['ts'][11:23]} {r['model']} in={r['prompt_tokens']} out={r['completion_tokens']} ${r['cost_usd']:.6f} "
             f"{r['tool'] or r['run_kind']}" for r in ok_rows[-6:]))
-        assert all(r["agent"] == alias and r["run_id"] for r in rows)
-        assert sum(1 for r in rows if r["status"] == "failure") >= 10
+        # everything that spent money is attributed to a run; refusals are attributed to the agent (some, raised by
+        # LiteLLM's auth stage before any hook runs, cannot carry the run: see T4.md finding 1)
+        assert all(r["run_id"] and r["parent_run_id"] is None or r["run_kind"] in ("task", "tool") for r in ok_rows)
+        assert all(r["run_id"] for r in ok_rows)
+        refused_rows = [r for r in rows if r["status"] == "failure"]
+        assert len(refused_rows) >= 10 and all(rep.classify(r) in ("attributed", "rejected") for r in refused_rows)
+        assert all("udget" in (r["error"] or "") for r in refused_rows)
         assert not any(rep.classify(r) == "unattributed" for r in rows)
+        with_run = sum(1 for r in refused_rows if r["run_id"])
         L.record("rogue_demo", {"cap_usd": cap, "spent_usd": spent, "requests": len(rows),
-                                "refused": sum(1 for r in rows if r["status"] == "failure"),
+                                "refused": len(refused_rows), "refused_rows_carrying_the_run": with_run,
                                 "key_spend_reported": info.get("spend"), "hammer_attempts_after_refusal": len(refused)})
     finally:
         if c is not None:

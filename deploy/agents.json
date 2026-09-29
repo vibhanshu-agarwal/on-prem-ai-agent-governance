@@ -19,7 +19,7 @@
       "team": "finance", "max_budget": 2.0, "models": ["mock-local", "mock-remote"],
       "capabilities": ["calls_tools"], "sandbox_tier": "gvisor", "auth": "oidc", "image": "govpilot/agents:1",
       "oidc_subject": "finance-recon-agent",
-      "delegation": {"budget_usd": 0.2, "models": ["mock-local"], "ttl_s": 3600},
+      "delegation": {"budget_usd": 0.2, "models": ["mock-local"], "ttl_s": 86400},
       "metadata": {
         "token_policy": {"max_tokens_ceiling": 1024, "default_max_tokens": 64, "on_exceed": "reject", "on_insufficient_reservation": "reject"},
         "attribution": {"mode": "enforce"}
