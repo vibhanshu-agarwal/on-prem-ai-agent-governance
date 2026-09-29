@@ -70,6 +70,7 @@ class StopService:
         # 0. desired state first (persisted), so the reconciler backs us up from here on
         for aid in ids:
             self.register.mutate(aid, lambda a: (setattr(a, "desired_state", DESIRED_STOPPED)))
+        desired_persisted_wall = time.time()   # from here on no consequential action is authorized (T8)
         self.p.audit.append(actor, "stop.started", ",".join(ids), {
             "stop_id": stop_id, "reason": reason, "agents": ids,
             "extra_workloads": [w.name for w in (extra_workloads or [])], **(context or {})}, severity="warning")
@@ -179,7 +180,8 @@ class StopService:
         phase_end_wall = {k: round(wall0 + (mark[k] - t0), 3) for k in order}
         report = {
             "stop_id": stop_id, "actor": actor, "reason": reason, "agents": ids, "status": status,
-            "started_at": round(wall0, 3), "phase_end_wall": phase_end_wall, "timings_ms": timings,
+            "started_at": round(wall0, 3), "desired_state_persisted_at": round(desired_persisted_wall, 3),
+            "phase_end_wall": phase_end_wall, "timings_ms": timings,
             "target_s": self.policy.stop.target_s,
             "within_target": timings["total"] / 1000.0 <= self.policy.stop.target_s,
             "gateway": {"keys": gw_results, "errors": stray_errors},

@@ -231,3 +231,34 @@ def test_quarantine_refuses_when_unmanaged_blast_radius_grew_or_preview_expired(
         app.quarantine.approve(act["action_id"], CAROL)
     assert app.ports.repo.get("quarantine_actions", act["action_id"])["status"] == "stale"
     assert all(a.status == "active" for a in app.register.list())
+
+
+# ---- T8 additions: commit-time action authorization (in-window harm) and secret rotation (host drill) ----
+def test_consequential_action_denied_from_the_stop_decision_on(app):
+    res = _agent(app)
+    aid, kh = res["agent"].agent_id, res["agent"].gateway_keys[0].key_hash
+    assert app.access.authorize_action(kh, "email.send", "x@y")["allowed"] is True
+    # the stop's first step persists desired_state=stopped; nothing else of the stop has to have happened yet
+    app.register.mutate(aid, lambda a: setattr(a, "desired_state", "stopped"))
+    with pytest.raises(Forbidden):
+        app.access.authorize_action(kh, "email.send", "x@y")
+    with pytest.raises(Forbidden):
+        app.access.authorize_action("0" * 64, "db.write")                          # unknown key
+    acts = [(r.action, r.severity) for r in app.ports.audit.records if r.action.startswith("action.")]
+    assert acts == [("action.authorized", "info"), ("action.denied", "alert"), ("action.denied", "alert")]
+
+
+def test_rotate_secrets_reissues_key_and_credentials(app):
+    res = _agent(app)
+    aid = res["agent"].agent_id
+    old_key, old_hash = res["gateway_key"], res["agent"].gateway_keys[0].key_hash
+    cred = res["agent"].credentials[0].ref
+    app.stop.stop([aid], "alice", "host compromised")
+    out = app.register.rotate_secrets(aid, "alice", "host compromised")
+    ag = app.register.get(aid)
+    assert [k.key_hash for k in ag.gateway_keys] == [out["key_hash"]] and out["key_hash"] != old_hash
+    assert app.ports.gateway.probe(old_key) is False
+    assert app.ports.gateway.key_status(out["key_hash"]).blocked is True          # agent is still stopped
+    s = app.ports.secrets.get(cred)
+    assert s is not None and not s.revoked and s.value not in ("pw", None)
+    assert any(r.action == "secrets.rotated" for r in app.ports.audit.records)

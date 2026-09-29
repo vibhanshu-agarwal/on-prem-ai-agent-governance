@@ -118,6 +118,12 @@ class DelegationIn(BaseModel):
     capabilities: list[str] | None = None
 
 
+class ActionIn(BaseModel):
+    key_hash: str
+    action: str
+    target: str | None = None
+
+
 class ResolveIn(BaseModel):
     kind: Literal["oidc", "delegation"]
     subject: str | None = None
@@ -297,6 +303,15 @@ def stop_agent(agent_id: str, body: ReasonIn, p: Principal = Depends(principal))
     return a.stop.stop([agent_id], p.subject, body.reason)
 
 
+@api.post("/v1/agents/{agent_id}/rotate-secrets", tags=["stop"],
+          summary="Re-issue every secret of an agent (new gateway key; old keys deleted; tool/DB creds re-issued)")
+def rotate_secrets(agent_id: str, body: ReasonIn, p: Principal = Depends(principal)):
+    require(p, "operator")
+    if p.kind != "user":
+        raise Forbidden("secret rotation is a human action")
+    return app_().register.rotate_secrets(agent_id, p.subject, body.reason)
+
+
 @api.post("/v1/agents/{agent_id}/resume", tags=["stop"], summary="Reverse a stop/quarantine (creds stay revoked)")
 def resume_agent(agent_id: str, body: ReasonIn, p: Principal = Depends(principal)):
     require(p, "operator")
@@ -404,6 +419,13 @@ def resolve(body: ResolveIn, p: Principal = Depends(principal)):
     if not body.token:
         raise Forbidden("token required")
     return a.access.resolve_delegation(body.token, body.model)
+
+
+@api.post("/v1/actions/authorize", tags=["internal"],
+          summary="Commit-time authorization of a consequential side effect (tool gateway)")
+def authorize_action(body: ActionIn, p: Principal = Depends(principal)):
+    require(p, "tool-gateway")
+    return app_().access.authorize_action(body.key_hash, body.action, body.target, caller=p.subject)
 
 
 # ------------------------------------------------------------------ audit

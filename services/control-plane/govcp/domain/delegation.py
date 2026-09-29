@@ -178,6 +178,32 @@ class AccessService:
         agent, scope = self.delegation.authorize(token, model)
         return self._key_for(agent, via="delegation", ref=scope.holder)
 
+    def authorize_action(self, key_hash: str, action: str, target: str | None = None,
+                         caller: str = "tool-gateway") -> dict[str, Any]:
+        """T8 in-window harm: a consequential side effect (external send, DB write, payment) is authorized at
+        commit time by the tool gateway, against the agent's desired state in the register. The stop sequence
+        persists `desired_state=stopped` as its very first step (before keys, network, workloads), so from the
+        stop decision on no new side effect can be committed, even while containment is still in progress.
+        The agent is identified by the hash of the gateway key it presented (the same identity the gateway uses)."""
+        if not key_hash or not action:
+            raise InvalidRequest("key_hash and action are required")
+        # linearization point: a read that STARTS after the stop persisted desired_state sees it (read committed)
+        state_read_at = time.time()
+        agent = next((a for a in self.register.list() if any(k.key_hash == key_hash for k in a.gateway_keys)), None)
+        details = {"action": action, "target": target, "key_hash_prefix": key_hash[:12]}
+        if agent is None:
+            self.p.audit.append(caller, "action.denied", "unknown", {**details, "reason": "unknown key"},
+                                severity="alert")
+            raise Forbidden("key is not registered to any agent")
+        if agent.status != STATUS_ACTIVE or agent.desired_state != DESIRED_RUNNING:
+            self.p.audit.append(caller, "action.denied", agent.agent_id,
+                                {**details, "reason": f"{agent.status}/{agent.desired_state}"}, severity="alert")
+            raise Forbidden(f"agent {agent.agent_id!r} is {agent.status} (desired: {agent.desired_state})")
+        decision = "act-" + uuid.uuid4().hex[:12]
+        self.p.audit.append(caller, "action.authorized", agent.agent_id, {**details, "decision_id": decision})
+        return {"allowed": True, "agent_id": agent.agent_id, "decision_id": decision,
+                "state_read_at": state_read_at, "decided_at": time.time()}
+
     def _key_for(self, agent: Agent, via: str, ref: str) -> dict[str, Any]:
         if agent.status != STATUS_ACTIVE or agent.desired_state != DESIRED_RUNNING:
             # a stop in progress must not be able to mint a fresh (unblocked) key at first use

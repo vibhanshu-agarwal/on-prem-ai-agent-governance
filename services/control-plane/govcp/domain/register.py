@@ -173,6 +173,46 @@ class RegisterService:
         agent.gateway_keys.append(GatewayKeyRef(key_hash=issued.key_hash, alias=alias, secret_path=path))
         return issued
 
+    def rotate_secrets(self, agent_id: str, actor: str, reason: str) -> dict[str, Any]:
+        """T8 host-compromise drill: re-issue every secret an agent holds. A new gateway key is minted (blocked
+        while the agent is not meant to run), every old key is deleted at the gateway (blocked if the delete
+        fails) and its stored value revoked, and every tool/DB credential gets a fresh random value. Returns the
+        new raw key once, like registration. Audited as `secrets.rotated` (hash prefixes only, never values)."""
+        import secrets as _secrets
+        agent = self.get(agent_id)
+        old = list(agent.gateway_keys)
+        out: dict[str, Any] = {"agent_id": agent_id, "old_keys": [], "credentials": []}
+
+        def _mint(a: Agent):
+            out["_issued"] = self.provision_key(a, blocked=a.desired_state != "running")
+        agent = self.mutate(agent_id, _mint)
+        issued = out.pop("_issued")
+        for k in old:
+            try:
+                self.p.gateway.delete_key(k.key_hash)
+                how = "deleted"
+            except Exception as e:  # noqa: BLE001 - a key that cannot be deleted must at least be blocked
+                try:
+                    self.p.gateway.block_key(k.key_hash)
+                    how = f"blocked (delete failed: {type(e).__name__})"
+                except Exception as e2:  # noqa: BLE001
+                    how = f"FAILED: {type(e2).__name__}"
+            if k.secret_path:
+                self.p.secrets.revoke(k.secret_path)
+            out["old_keys"].append({"alias": k.alias, "key_hash_prefix": k.key_hash[:12], "result": how})
+        for c in agent.credentials:
+            self.p.secrets.put(c.ref, "rot-" + _secrets.token_urlsafe(24), {"agent_id": agent_id, "kind": c.kind,
+                                                                           "rotated_by": actor})
+            out["credentials"].append({"kind": c.kind, "ref": c.ref, "result": "re-issued"})
+
+        def _drop_old(a: Agent):
+            gone = {k.key_hash for k in old}
+            a.gateway_keys = [k for k in a.gateway_keys if k.key_hash not in gone]
+        self.mutate(agent_id, _drop_old)
+        out["new_key"] = {"alias": issued.alias, "key_hash_prefix": issued.key_hash[:12]}
+        self.p.audit.append(actor, "secrets.rotated", agent_id, {"reason": reason, **out})
+        return {**out, "gateway_key": issued.raw_key, "key_hash": issued.key_hash}
+
     def raw_key(self, agent: Agent) -> str | None:
         for k in agent.gateway_keys:
             if k.secret_path:
