@@ -1,0 +1,188 @@
+"""Agent identity register: one governed identity per agent linking every handle it holds."""
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from .context import Ports
+from .errors import Conflict, Forbidden, InvalidRequest, NotFound
+from .models import (AGENT_LABEL, ROOT_AGENT_LABEL, TEAM_LABEL, Agent, CredentialRef, GatewayKeyRef, Principal,
+                     now)
+from .policy import Policy
+from .repository import AGENTS
+
+AGENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,94}$")
+TIER_ORDER = {"container": 0, "gvisor": 1, "microvm": 2}
+# Minimal deploy-time admission rule from report section 4 (T7 owns the full policy-as-code gate).
+CAPABILITY_MIN_TIER = {"executes_code": "microvm", "shell": "microvm", "calls_tools": "gvisor"}
+
+
+def key_secret_path(agent_id: str, alias: str) -> str:
+    return f"gateway-keys/{agent_id}/{alias}"
+
+
+class RegisterService:
+    def __init__(self, ports: Ports, policy: Policy):
+        self.p = ports
+        self.policy = policy
+        self.delegation = None  # set by wiring (DelegationService issues the root capability token)
+
+    # ---- reads -------------------------------------------------------------
+    def get(self, agent_id: str) -> Agent:
+        d = self.p.repo.get(AGENTS, agent_id)
+        if not d:
+            raise NotFound(f"agent {agent_id!r} not registered")
+        return Agent.from_dict(d)
+
+    def find(self, agent_id: str) -> Agent | None:
+        d = self.p.repo.get(AGENTS, agent_id)
+        return Agent.from_dict(d) if d else None
+
+    def list(self, team: str | None = None, status: str | None = None) -> list[Agent]:
+        out = [Agent.from_dict(d) for d in self.p.repo.list(AGENTS)]
+        if team:
+            out = [a for a in out if a.team == team]
+        if status:
+            out = [a for a in out if a.status == status]
+        return sorted(out, key=lambda a: a.agent_id)
+
+    def by_subject(self, subject: str) -> Agent | None:
+        for a in self.list():
+            if subject in a.oidc_subjects:
+                return a
+        return None
+
+    def descendants(self, agent_id: str) -> list[Agent]:
+        agents = self.list()
+        children: dict[str, list[Agent]] = {}
+        for a in agents:
+            if a.parent_agent_id:
+                children.setdefault(a.parent_agent_id, []).append(a)
+        out, stack = [], [agent_id]
+        while stack:
+            for c in children.get(stack.pop(), []):
+                out.append(c)
+                stack.append(c.agent_id)
+        return out
+
+    def lineage(self, agent: Agent) -> list[str]:
+        chain, cur, seen = [agent.agent_id], agent, set()
+        while cur.parent_agent_id and cur.parent_agent_id not in seen:
+            seen.add(cur.agent_id)
+            cur = self.get(cur.parent_agent_id)
+            chain.append(cur.agent_id)
+        return list(reversed(chain))
+
+    # ---- writes ------------------------------------------------------------
+    def save(self, agent: Agent) -> Agent:
+        agent.updated_at = now()
+        self.p.repo.put(AGENTS, agent.agent_id, agent.to_dict())
+        return agent
+
+    def mutate(self, agent_id: str, fn) -> Agent:
+        def _f(d):
+            a = Agent.from_dict(d)
+            fn(a)
+            a.updated_at = now()
+            return a.to_dict()
+        try:
+            return Agent.from_dict(self.p.repo.update(AGENTS, agent_id, _f))
+        except KeyError:
+            raise NotFound(f"agent {agent_id!r} not registered") from None
+
+    def check_admission(self, tier: str, capabilities: list[str]) -> None:
+        if tier not in self.policy.sandbox_tiers:
+            raise InvalidRequest(f"unknown sandbox tier {tier!r}", allowed=self.policy.sandbox_tiers)
+        for cap in capabilities:
+            need = CAPABILITY_MIN_TIER.get(cap)
+            if need and TIER_ORDER.get(tier, -1) < TIER_ORDER[need]:
+                raise InvalidRequest(f"capability {cap!r} requires sandbox tier >= {need!r}, got {tier!r}")
+
+    def register(self, spec: dict[str, Any], actor: Principal, *, parent: Agent | None = None,
+                 depth: int = 0, audit_action: str = "agent.registered") -> dict[str, Any]:
+        agent_id = str(spec.get("agent_id", "")).strip()
+        team = str(spec.get("team", "")).strip()
+        if not AGENT_ID_RE.match(agent_id):
+            raise InvalidRequest("agent_id must match ^[a-z0-9][a-z0-9._-]{1,94}$")
+        if not team:
+            raise InvalidRequest("team is required")
+        if not (actor.has_role("operator") or actor.owns_team(team) and actor.has_role("owner")
+                or parent is not None):
+            raise Forbidden(f"{actor.subject} may not register agents for team {team!r}")
+        if self.find(agent_id):
+            raise Conflict(f"agent {agent_id!r} already registered")
+        tier = spec.get("sandbox_tier", "container")
+        caps = list(spec.get("capabilities") or [])
+        self.check_admission(tier, caps)
+        models = list(spec.get("models") or [])
+        budget = float(spec.get("max_budget_usd", 0) or 0)
+        if budget < 0:
+            raise InvalidRequest("max_budget_usd must be >= 0")
+
+        agent = Agent(
+            agent_id=agent_id, owner=str(spec.get("owner") or actor.subject), team=team,
+            display_name=spec.get("display_name", ""), max_budget_usd=budget,
+            budget_duration=spec.get("budget_duration", "30d"), models=models,
+            workload_labels=dict(spec.get("workload_labels") or {AGENT_LABEL: agent_id}),
+            oidc_subjects=list(spec.get("oidc_subjects") or []), sandbox_tier=tier, capabilities=caps,
+            labels=dict(spec.get("labels") or {}),
+            parent_agent_id=parent.agent_id if parent else None,
+            root_agent_id=(parent.root_agent_id if parent else agent_id), delegation_depth=depth,
+        )
+        # Other credentials (tool / DB / MCP). A value, if given, goes to the SecretStore, never the register.
+        for c in spec.get("credentials") or []:
+            ref = c.get("ref") or f"creds/{agent_id}/{c['kind']}"
+            if c.get("value"):
+                self.p.secrets.put(ref, c["value"], {"agent_id": agent_id, "kind": c["kind"]})
+            agent.credentials.append(CredentialRef(kind=c["kind"], ref=ref, description=c.get("description", "")))
+
+        raw_key = None
+        # Link keys that already exist at the gateway (e.g. provisioned by scripts/bootstrap.sh).
+        for alias in spec.get("link_key_aliases") or []:
+            found = self.p.gateway.find_keys(alias=alias)
+            if not found:
+                raise InvalidRequest(f"no gateway key with alias {alias!r}")
+            for k in found:
+                agent.gateway_keys.append(GatewayKeyRef(key_hash=k.key_hash, alias=k.alias))
+        if spec.get("provision_key", True) and not spec.get("link_key_aliases"):
+            issued = self.provision_key(agent)
+            raw_key = issued.raw_key
+
+        self.save(agent)
+        token = None
+        if self.delegation is not None and parent is None:
+            token = self.delegation.issue_root(agent)
+        self.p.audit.append(actor.subject, audit_action, agent_id, {
+            "team": team, "owner": agent.owner, "budget_usd": budget, "models": models,
+            "keys": [k.key_hash[:12] for k in agent.gateway_keys], "sandbox_tier": tier,
+            "capabilities": caps, "credentials": [c.ref for c in agent.credentials],
+            "oidc_subjects": agent.oidc_subjects, "parent": agent.parent_agent_id})
+        return {"agent": agent, "gateway_key": raw_key, "delegation_token": token}
+
+    def provision_key(self, agent: Agent, blocked: bool = False):
+        alias = agent.agent_id if not agent.gateway_keys else f"{agent.agent_id}-{len(agent.gateway_keys) + 1}"
+        issued = self.p.gateway.create_key(
+            alias=alias, team=agent.team, models=agent.models, max_budget_usd=agent.max_budget_usd,
+            metadata={"agent_id": agent.agent_id, "team": agent.team, "root_agent_id": agent.root_agent_id,
+                      "parent_agent_id": agent.parent_agent_id, "governed_by": "govcp"},
+            blocked=blocked, budget_duration=agent.budget_duration)
+        path = key_secret_path(agent.agent_id, alias)
+        self.p.secrets.put(path, issued.raw_key, {"agent_id": agent.agent_id, "key_hash": issued.key_hash})
+        agent.gateway_keys.append(GatewayKeyRef(key_hash=issued.key_hash, alias=alias, secret_path=path))
+        return issued
+
+    def raw_key(self, agent: Agent) -> str | None:
+        for k in agent.gateway_keys:
+            if k.secret_path:
+                s = self.p.secrets.get(k.secret_path)
+                if s and not s.revoked and s.value:
+                    return s.value
+        return None
+
+    def workload_labels_for(self, agent: Agent) -> dict[str, str]:
+        return dict(agent.workload_labels)
+
+
+def default_container_labels(agent: Agent) -> dict[str, str]:
+    """Labels an agent's containers should carry so the Orchestrator can find them."""
+    return {AGENT_LABEL: agent.agent_id, TEAM_LABEL: agent.team, ROOT_AGENT_LABEL: agent.root_agent_id or agent.agent_id}

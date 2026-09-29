@@ -1,0 +1,181 @@
+# T3 control plane. An overlay on the base stack; always used together with it:
+#   docker compose -f deploy/docker-compose.yml -f deploy/compose.control-plane.yml \
+#     --env-file deploy/.env --env-file .local/control-plane.env up -d --no-deps <services>
+# scripts/control-plane-up.sh does exactly that (and generates .local/control-plane.env).
+#
+# Networks added here
+#   cpdb        internal. control plane <-> its own Postgres (separate from LiteLLM's DB)
+#   cpinternal  internal. auth proxy -> control plane / IdP
+#   control     bridge.   only so Docker can publish 127.0.0.1 ports for operators and tests
+# Joined from the base file
+#   backend     control plane, auth proxy and estop reach the gateway admin API here
+# Added for SSO agents
+#   agents_sso  internal. SSO (JWT) agents join this instead of `agents`: they can reach only the
+#               auth proxy (`sso-gateway`) and the IdP, never the raw gateway, so they cannot skip
+#               the auth layer. The base `agents` network keeps exactly one member: the gateway.
+#
+# Docker socket: the control plane and estop mount it to stop containers and run the
+# short-lived quarantine helper. That is root-equivalent on the host (see docs/results/T3.md);
+# the Kubernetes adapter would use a namespaced service account instead.
+
+x-cp-image: &cp-image
+  image: govpilot/control-plane:1
+
+x-hc: &hc
+  interval: 3s
+  timeout: 3s
+  retries: 40
+
+services:
+  cp-postgres:
+    image: postgres:16.14-alpine
+    container_name: gov-cp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cp_super
+      POSTGRES_PASSWORD: ${CP_PG_SUPER_PASSWORD:?run scripts/control-plane-up.sh}
+      POSTGRES_DB: controlplane
+      CP_OWNER_PASSWORD: ${CP_OWNER_PASSWORD:?}
+      CP_APP_PASSWORD: ${CP_APP_PASSWORD:?}
+    volumes:
+      - cpdata:/var/lib/postgresql/data
+      - ./control-plane/db-init:/docker-entrypoint-initdb.d:ro
+    networks: [cpdb, control]
+    ports:
+      - "127.0.0.1:${CP_PG_PORT:-55432}:5432"   # localhost only: contract tests use the app role
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cp_super -d controlplane"]
+      <<: *hc
+
+  cp-migrate:
+    <<: *cp-image
+    build: ../services/control-plane
+    container_name: gov-cp-migrate
+    restart: "no"
+    command: ["python", "-m", "govcp.migrate"]
+    environment:
+      CP_OWNER_DSN: postgresql://cp_owner:${CP_OWNER_PASSWORD}@cp-postgres:5432/controlplane
+    depends_on:
+      cp-postgres: {condition: service_healthy}
+    networks: [cpdb]
+
+  idp:
+    <<: *cp-image
+    container_name: gov-idp
+    restart: unless-stopped
+    command: ["uvicorn", "govcp.idp.app:app", "--host", "0.0.0.0", "--port", "8300"]
+    environment:
+      GOVCP_CONFIG: /etc/govcp/config.yaml
+      IDP_ADMIN_TOKEN: ${IDP_ADMIN_TOKEN:?}
+      IDP_PASSWORD_ALICE: ${IDP_PASSWORD_ALICE:?}
+      IDP_PASSWORD_BOB: ${IDP_PASSWORD_BOB:?}
+      IDP_PASSWORD_CAROL: ${IDP_PASSWORD_CAROL:?}
+      IDP_PASSWORD_DAVE: ${IDP_PASSWORD_DAVE:?}
+      IDP_PASSWORD_ERIN: ${IDP_PASSWORD_ERIN:?}
+      IDP_CLIENT_SECRET_AUTHPROXY: ${IDP_CLIENT_SECRET_AUTHPROXY:?}
+      IDP_CLIENT_SECRET_FEED_DOCKER_EVENTS: ${IDP_CLIENT_SECRET_FEED_DOCKER_EVENTS:?}
+      IDP_CLIENT_SECRET_FEED_TEST: ${IDP_CLIENT_SECRET_FEED_TEST:?}
+    volumes:
+      - idpdata:/data
+      - ./control-plane/config.yaml:/etc/govcp/config.yaml:ro
+    networks:
+      cpinternal: {aliases: [idp]}
+      agents_sso: {aliases: [idp]}
+      control: {}
+    ports:
+      - "127.0.0.1:${IDP_PORT:-8300}:8300"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8300/healthz',timeout=2)"]
+      <<: *hc
+
+  control-plane:
+    <<: *cp-image
+    container_name: gov-control-plane
+    restart: unless-stopped
+    command: ["uvicorn", "govcp.api.app:app", "--host", "0.0.0.0", "--port", "8100"]
+    depends_on:
+      cp-migrate: {condition: service_completed_successfully}
+      idp: {condition: service_healthy}
+    environment:
+      GOVCP_CONFIG: /etc/govcp/config.yaml
+      CP_DATABASE_URL: postgresql://cp_app:${CP_APP_PASSWORD}@cp-postgres:5432/controlplane
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run scripts/bootstrap.sh}
+      IDP_ADMIN_TOKEN: ${IDP_ADMIN_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - cpsecrets:/data/secrets
+      - estopjournal:/data/estop:ro
+      - ./control-plane/config.yaml:/etc/govcp/config.yaml:ro
+    networks:
+      cpdb: {}
+      cpinternal: {aliases: [control-plane]}
+      backend: {}
+      control: {}
+    ports:
+      - "127.0.0.1:${CP_PORT:-8100}:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8100/healthz',timeout=2)"]
+      <<: *hc
+
+  authproxy:
+    <<: *cp-image
+    container_name: gov-authproxy
+    restart: unless-stopped
+    command: ["uvicorn", "govcp.authproxy.app:app", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      GOVCP_CONFIG: /etc/govcp/config.yaml
+      IDP_CLIENT_SECRET_AUTHPROXY: ${IDP_CLIENT_SECRET_AUTHPROXY}
+    volumes:
+      - ./control-plane/config.yaml:/etc/govcp/config.yaml:ro
+    networks:
+      agents_sso: {aliases: [sso-gateway]}
+      cpinternal: {}
+      backend: {}
+      control: {}
+    ports:
+      - "127.0.0.1:${AUTHPROXY_PORT:-4180}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+      <<: *hc
+
+  estop:
+    <<: *cp-image
+    container_name: gov-estop
+    restart: unless-stopped
+    command: ["uvicorn", "govcp.estop.app:app", "--host", "0.0.0.0", "--port", "8190"]
+    environment:
+      GATEWAY_URL: http://gateway:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      ESTOP_TOKEN_SHA256: ${ESTOP_TOKEN_SHA256:?}
+      ESTOP_JOURNAL: /data/estop/journal.jsonl
+      ESTOP_GOVERNED_NETWORKS: govpilot_agents,govpilot_agents_sso
+      ESTOP_CHOKEPOINTS: gov-gateway,gov-authproxy
+      ESTOP_HELPER_IMAGE: govpilot/control-plane:1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - estopjournal:/data/estop
+    networks: [backend, control]
+    ports:
+      - "127.0.0.1:${ESTOP_PORT:-8190}:8190"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8190/healthz',timeout=2)"]
+      <<: *hc
+
+networks:
+  agents_sso:
+    name: govpilot_agents_sso
+    internal: true
+  cpdb:
+    name: govpilot_cpdb
+    internal: true
+  cpinternal:
+    name: govpilot_cpinternal
+    internal: true
+  control:
+    name: govpilot_control
+
+volumes:
+  cpdata:
+  idpdata:
+  cpsecrets:
+  estopjournal:

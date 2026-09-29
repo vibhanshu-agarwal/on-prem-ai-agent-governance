@@ -1,0 +1,134 @@
+# Control-plane config (T3). Environment-specific values live here, secrets only in env.
+# ${VAR} / ${VAR:-default} are expanded from the environment at load time.
+#
+# To adopt in another environment: change the adapter `type` (and its settings) per port.
+#   gateway_admin       litellm                  (another gateway: new GatewayAdmin adapter)
+#   orchestrator        docker                   -> kubernetes (scale to 0 / suspend job)
+#   network_quarantine  docker                   -> kubernetes NetworkPolicy/Cilium + conntrack flush
+#   identity_provider   oidc (stand-in IdP)      -> corporate OIDC (Keycloak/Entra/Okta) + SCIM disable
+#   secret_store        file                     -> vault
+#   credential_revoker  secret_store             -> per-system revokers (DB roles, MCP tokens, PKI)
+#   audit_sink          postgres                 -> SIEM forwarder (keep postgres as local copy)
+#   repository          postgres
+
+adapters:
+  gateway_admin:
+    type: litellm
+    url: ${GATEWAY_URL:-http://gateway:4000}
+    master_key_env: LITELLM_MASTER_KEY
+  orchestrator:
+    type: docker
+  network_quarantine:
+    type: docker
+    governed_networks: [govpilot_agents, govpilot_agents_sso]   # networks agents use to reach governed services
+    chokepoints: [gov-gateway, gov-authproxy]     # where we confirm live connections are gone
+    helper_image: govpilot/control-plane:1
+    drain_timeout_s: 3
+  identity_provider:
+    type: oidc
+    issuer: http://idp:8300
+    jwks_url: ${IDP_JWKS_URL:-http://idp:8300/jwks.json}
+    admin_url: ${IDP_ADMIN_URL:-http://idp:8300}
+    admin_token_env: IDP_ADMIN_TOKEN
+  secret_store:
+    type: file
+    path: ${CP_SECRETS_FILE:-/data/secrets/secrets.json}
+  credential_revoker:
+    type: secret_store
+    kinds: [db, tool, mcp, queue, api]
+  audit_sink:
+    type: postgres
+    dsn_env: CP_DATABASE_URL
+  repository:
+    type: postgres
+    dsn_env: CP_DATABASE_URL
+
+reconciler:
+  enabled: true
+  interval_s: 1.0
+
+estop:
+  journal_path: /data/estop/journal.jsonl
+
+policy:
+  sandbox_tiers: [container, gvisor, microvm]
+  stop:
+    stop_grace_s: 2
+    verify_settle_s: 1.5
+    target_s: 30
+    cascade_to_delegates: true
+    disable_idp_subjects: true
+  quarantine:
+    preview_ttl_s: 600
+    dual_control_min_agents: 4       # a selector hitting >= 4 agents is fleet-wide
+    dual_control_min_teams: 2        # ... or one spanning >= 2 teams
+    approvals_required: 2
+  discovery:
+    default_daily_limit: 20
+    require_evidence_for_auto: true
+    feeds:
+      docker-events: {daily_limit: 50, auto: true}      # T6
+      openlit-controller: {daily_limit: 50, auto: true} # T6
+      gateway-logs: {daily_limit: 50, auto: true}       # T6
+      idp-first-use: {daily_limit: 20, auto: true}      # auth proxy: unregistered SSO identity
+      feed-test: {daily_limit: 3, auto: true}           # tests/control
+  delegation:
+    max_depth: 2
+    default_ttl_s: 3600
+
+# The T1 sample agents, linked to the keys scripts/bootstrap.sh provisioned.
+seed_agents:
+  - agent_id: hr-agent
+    team: hr
+    owner: carol
+    display_name: HR assistant
+    max_budget_usd: 1.0
+    models: [mock-local]
+    link_key_aliases: [hr-agent]
+    sandbox_tier: container
+    capabilities: [chat]
+  - agent_id: finance-recon-agent
+    team: finance
+    owner: dave
+    display_name: Finance reconciliation
+    max_budget_usd: 2.0
+    models: [mock-local, mock-remote]
+    link_key_aliases: [finance-recon-agent]
+    sandbox_tier: gvisor
+    capabilities: [chat, calls_tools]
+  - agent_id: coding-agent
+    team: engineering
+    owner: dave
+    display_name: Coding agent
+    max_budget_usd: 5.0
+    models: [mock-local, mock-remote, mock-local-slow, mock-remote-slow]
+    link_key_aliases: [coding-agent]
+    sandbox_tier: microvm
+    capabilities: [chat, calls_tools, executes_code]
+
+# Stand-in IdP (govcp.idp). Passwords: env IDP_PASSWORD_<USER>; client secrets: env named by secret_env.
+idp:
+  issuer: http://idp:8300
+  token_ttl_s: 900          # machine tokens live 15 min: the stop must not wait for this
+  user_token_ttl_s: 3600
+  users:
+    alice: {name: Alice (SecOps lead), roles: [admin, operator, approver]}
+    bob:   {name: Bob (SRE on call),    roles: [operator, approver]}
+    carol: {name: Carol (HR owner),     roles: [owner, approver], teams: [hr]}
+    dave:  {name: Dave (Eng owner),     roles: [owner], teams: [engineering, finance]}
+    erin:  {name: Erin (viewer),        roles: [viewer]}
+  static_clients:
+    authproxy: {roles: [authproxy], secret_env: IDP_CLIENT_SECRET_AUTHPROXY}
+    docker-events: {roles: [feed], secret_env: IDP_CLIENT_SECRET_FEED_DOCKER_EVENTS}
+    feed-test: {roles: [feed], secret_env: IDP_CLIENT_SECRET_FEED_TEST}
+
+authproxy:
+  gateway_url: http://gateway:4000
+  control_plane_url: http://control-plane:8100
+  issuer: http://idp:8300
+  jwks_url: http://idp:8300/jwks.json
+  idp_token_url: http://idp:8300/token
+  audience: govpilot-gateway
+  resolve_cache_s: 5
+  client_id: authproxy
+  client_secret_env: IDP_CLIENT_SECRET_AUTHPROXY

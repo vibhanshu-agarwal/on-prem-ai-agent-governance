@@ -1,0 +1,22 @@
+# A compose-managed "rogue" agent for the desired-state test. restart: always, so
+# only a changed desired state (plus the control plane's reconciler) keeps it down.
+services:
+  rogue:
+    image: govpilot/control-plane:1
+    command: ["python", "-u", "-m", "govcp.tools.sample_agent"]
+    restart: always
+    environment:
+      GATEWAY_URL: http://gateway:4000
+      AGENT_KEY: ${ROGUE_KEY}
+      MODEL: mock-local-slow
+      MAX_TOKENS: "200"
+    labels:
+      govpilot.agent_id: ${ROGUE_AGENT_ID}
+      govpilot.team: ${ROGUE_TEAM}
+      govpilot.root_agent_id: ${ROGUE_AGENT_ID}
+      govpilot.test: t3
+    networks: [agents]
+networks:
+  agents:
+    name: govpilot_agents
+    external: true
