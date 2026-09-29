@@ -23,6 +23,12 @@ def test_injection_in_tool_result_is_blocked(harness):
     assert harness.audit.of("guardrail.blocked")[-1]["rule"] == "injection"
 
 
+@pytest.mark.parametrize("role", ["Tool", " FUNCTION "])
+def test_role_case_does_not_dodge_the_untrusted_screen(harness, role):
+    with pytest.raises(GuardrailBlocked):
+        harness.request([{"role": role, "tool_call_id": "1", "content": INJ}], agent="coding-agent")
+
+
 def test_injection_marked_untrusted_by_flag_or_tag_is_blocked(harness):
     with pytest.raises(GuardrailBlocked):
         harness.request([{"role": "user", "content": f"retrieved doc: {INJ}", "untrusted": True}], agent="coding-agent")

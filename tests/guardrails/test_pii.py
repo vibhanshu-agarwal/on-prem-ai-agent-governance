@@ -70,7 +70,7 @@ def test_list_content_parts_and_system_role(harness):
             {"role": "user", "content": [{"type": "text", "text": "my email is carol@example.com"},
                                          {"type": "image_url", "image_url": {"url": "http://x/y.png"}}]}]
     d, _ = harness.request(msgs, agent="coding-agent")
-    assert d["messages"][0]["content"] == "Escalate to ops@corp.example on failure."     # system prompt is trusted config
+    assert d["messages"][0]["content"] == "Escalate to <EMAIL_ADDRESS> on failure."      # agent-written: not a bypass
     assert d["messages"][1]["content"][0]["text"] == "my email is <EMAIL_ADDRESS>"
     assert d["messages"][1]["content"][1]["type"] == "image_url"
 

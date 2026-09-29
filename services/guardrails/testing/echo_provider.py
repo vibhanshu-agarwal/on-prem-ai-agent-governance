@@ -4,8 +4,11 @@ exercised end to end through the real gateway. It also records what it received
 (GET /_received) so tests can prove what actually reached the model after input masking.
 
   content containing  [[tool_call:NAME:{"json":"args"}]]  => response is a tool call to NAME
+  content containing  [[emit_b64:BASE64]]                 => response is "ECHO: " + the decoded text
+                      (puts PII/secrets in the OUTPUT without them passing the input guardrails)
 Runs inside the govpilot/mock-provider:1 image (FastAPI + uvicorn already there); never in a demo path.
 """
+import base64
 import json
 import re
 import time
@@ -18,6 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 app = FastAPI(title="mock-echo")
 RECEIVED: deque = deque(maxlen=50)
 TOOL = re.compile(r"\[\[tool_call:([A-Za-z0-9_.-]+):(\{.*?\})\]\]", re.S)
+EMIT = re.compile(r"\[\[emit_b64:([A-Za-z0-9+/=]+)\]\]")
 
 
 def _text(c):
@@ -52,6 +56,9 @@ async def chat(request: Request):
     last = _text(msgs[-1].get("content")) if msgs else ""
     ptok = sum(len(_text(m.get("content")).split()) + 3 for m in msgs)
     cid, created, model = "chatcmpl-" + uuid.uuid4().hex[:24], int(time.time()), body.get("model", "mock-echo")
+    em = EMIT.search(last)
+    if em:
+        last = base64.b64decode(em.group(1)).decode("utf-8")
     m = TOOL.search(last)
     msg = {"role": "assistant", "content": None if m else "ECHO: " + last}
     if m:

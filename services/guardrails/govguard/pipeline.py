@@ -205,7 +205,7 @@ class GuardrailPipeline:
         if pol.injection_action != "off":
             for u in units:
                 if pol.injection_scan == "all":
-                    if u.role == "system":
+                    if u.role in ("system", "developer"):
                         continue
                     targets = [(u.text, None)]
                 elif u.untrusted:
@@ -234,10 +234,11 @@ class GuardrailPipeline:
                     out.findings.append({"rule": "injection", "action": pol.injection_action, **detail})
                     self._evt(ctx, "guardrail.injection_" + pol.injection_action, **detail)
 
-        # 2. secrets on input
+        # 2. secrets on input (every role: the calling agent writes its own system prompt, so a system
+        #    message is not trusted operator config and must not be a channel around the check)
         if pol.secrets_input != "allow":
             for u in units:
-                if u.role == "system" or not find_secrets(u.text):
+                if not find_secrets(u.text):
                     continue
                 red, kinds = redact_secrets(u.text)
                 if self._override(ctx, active, "secrets", kinds=kinds):
@@ -257,7 +258,7 @@ class GuardrailPipeline:
 
         # 3. PII on input
         pii_units = [u for u in units if u.role in (pol.raw.get("pii") or {}).get("scan_roles",
-                                                    ["user", "tool", "function", "assistant"]) and len(u.text) >= 6]
+                                                    ["system", "developer", "user", "tool", "function", "assistant"]) and len(u.text) >= 6]
         if pol.pii_entities and pii_units:
             spans_per = await self._analyze_texts(ctx, pol, out, [u.text for u in pii_units], list(pol.pii_entities))
             if spans_per is not None:
@@ -331,7 +332,7 @@ class GuardrailPipeline:
         for mi, m in enumerate(messages):
             if not isinstance(m, dict):
                 continue
-            role = str(m.get("role", ""))
+            role = str(m.get("role", "")).strip().lower()   # "Tool" must not dodge the untrusted screen
             flagged = role in ("tool", "function") or bool(m.get("_govguard_untrusted"))
             for pi, text in iter_text_parts(m.get("content")):
                 units.append(_Unit(mi, pi, role, text, flagged))

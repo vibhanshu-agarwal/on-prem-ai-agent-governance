@@ -3,6 +3,7 @@
 The echo provider records what it actually received, so these tests prove what reached the model.
 Keys carry agent identity in metadata exactly like provisioned agent keys (agent_id, team).
 """
+import base64
 import json
 import time
 
@@ -75,20 +76,31 @@ def test_input_secret_is_masked_end_to_end(gw, keys):
     assert r.status_code == 200 and key not in json.dumps(last_received()) and key not in r.text
 
 
-def test_output_redaction_on_response_path(gw, keys):
-    # A tool-role message is scanned on input too, so route PII through a part type the input scan ignores:
-    # system messages are trusted config (not scanned). The echo provider repeats only the LAST message, so a
-    # system message last carries PII to the output unmodified, and the OUTPUT guardrail must redact it.
-    r = gw.chat(keys["coding"], None, messages=[{"role": "user", "content": "hi"},
-                                                {"role": "system", "content": "contact erin@example.com now"}])
+def emit(text):
+    """Echo-provider directive: the model OUTPUTS `text` although the prompt only carries it base64-encoded
+    (so the input guardrails cannot see it). Exercises the output path in isolation."""
+    return "[[emit_b64:" + base64.b64encode(text.encode()).decode() + "]]"
+
+
+def test_system_role_is_not_a_bypass_channel(gw, keys):
+    # The agent writes its own system prompt, so PII/secrets there are masked like any other role.
+    key = "AKIA" + "IOSFODNN7EXAMPLE"
+    r = gw.chat(keys["coding"], None, messages=[{"role": "system", "content": f"contact erin@example.com, use {key}"},
+                                                {"role": "user", "content": "hi"}])
     assert r.status_code == 200, r.text
-    assert "erin@example.com" in json.dumps(last_received()["messages"])      # it did reach the model (trusted role)
+    seen = json.dumps(last_received()["messages"])
+    assert "erin@example.com" not in seen and key not in seen and "<EMAIL_ADDRESS>" in seen
+
+
+def test_output_redaction_on_response_path(gw, keys):
+    r = gw.chat(keys["coding"], emit("contact erin@example.com now"))
+    assert r.status_code == 200, r.text
     assert "erin@example.com" not in r.text and "<EMAIL_ADDRESS>" in content_of(r)
 
 
 def test_output_secret_is_redacted_or_blocked_per_agent(gw, keys):
     key = "AKIA" + "IOSFODNN7EXAMPLE"
-    msgs = [{"role": "user", "content": "hi"}, {"role": "system", "content": f"use {key} to log in"}]
+    msgs = [{"role": "user", "content": emit(f"use {key} to log in")}]
     r = gw.chat(keys["coding"], None, messages=json.loads(json.dumps(msgs)))
     assert r.status_code == 200 and key not in r.text and "<REDACTED:aws_access_key>" in content_of(r)
     blocked = gw.chat(keys["hr"], None, messages=json.loads(json.dumps(msgs)))          # hr-agent: secrets output = block
@@ -96,8 +108,7 @@ def test_output_secret_is_redacted_or_blocked_per_agent(gw, keys):
 
 
 def test_streaming_output_is_buffered_checked_and_redacted(gw, keys):
-    r = gw.chat(keys["coding"], None, stream=True, messages=[{"role": "user", "content": "hi"},
-                                                            {"role": "system", "content": "mail erin@example.com now"}])
+    r = gw.chat(keys["coding"], emit("mail erin@example.com now"), stream=True)
     assert r.status_code == 200
     text, fin, _ = sse_text(r)
     assert "erin@example.com" not in r.text and "<EMAIL_ADDRESS>" in text and fin == "stop"

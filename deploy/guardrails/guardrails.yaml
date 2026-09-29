@@ -41,7 +41,7 @@ defaults:
   pii:
     input: mask                       # default action for the entities below: mask | block | allow
     output: redact                    # redact | block | allow
-    scan_roles: [user, tool, function, assistant]
+    scan_roles: [system, developer, user, tool, function, assistant]   # the agent writes its own system prompt: not a bypass channel
     score_threshold: 0.5              # Presidio scores an unlabelled phone number 0.4 (0.75 with a context word
                                       # like "phone"); 0.5 keeps 10-digit invoice numbers out (see T5.md FP notes)
     entity_thresholds: {}             # per-entity override, e.g. {PHONE_NUMBER: 0.4} for higher recall
