@@ -172,3 +172,62 @@ def test_reconciler_enforces_quarantine_rules_on_new_workloads(app):
     late = app.ports.orchestrator.add(Workload(id="late", name="late", image="img:1",
                                                labels={"govpilot.team": "ops"}, host="mem-host", running=True))
     assert app.reconciler.run_once()["enforced"] == ["late"] and not late.running
+
+
+def test_verify_sees_workloads_and_keys_that_appeared_after_the_stop_started(app):
+    """Verification must check the live systems, not the snapshot the stop took: a container re-created
+    (or a key minted) between the block phase and verification is a failed stop, not a passed one."""
+    res = _agent(app)
+    aid = res["agent"].agent_id
+    assert app.stop.stop([aid], "alice", "t")["verify"]["ok"]
+    revived = app.ports.orchestrator.add(Workload(id=f"{aid}-new", name=f"{aid}-new", image="img:1",
+                                                  labels={"govpilot.agent_id": aid}, host="mem-host", running=True,
+                                                  networks=["agents"]))
+    v = app.stop.verify([app.register.get(aid)], [])
+    assert not v["ok"]
+    failed = {(c["check"], c["target"]) for c in v["failed"]}
+    assert ("workload.appeared_during_stop", revived.name) in failed and ("workload.not_running", revived.name) in failed
+    app.ports.orchestrator.w[revived.id].running = False
+    app.ports.orchestrator.w[revived.id].networks = []
+    stray = app.ports.gateway.create_key("late-key", "hr", ["m1"], 1, {"agent_id": aid})
+    v = app.stop.verify([app.register.get(aid)], [])
+    assert ("gateway.key_blocked", "late-key") in {(c["check"], c["target"]) for c in v["failed"]}
+    app.ports.gateway.block_key(stray.key_hash)
+    # once the late key is blocked and the revived container is down, only its appearance is still flagged
+    assert {c["check"] for c in app.stop.verify([app.register.get(aid)], [])["failed"]} == \
+        {"workload.appeared_during_stop"}
+
+
+def test_stop_in_progress_cannot_mint_tokens_or_keys(app):
+    """desired_state flips first and status last; in between, neither delegation nor first-use key mapping may work."""
+    res = _agent(app, oidc_subjects=["sso-sub"])
+    aid = res["agent"].agent_id
+    app.register.mutate(aid, lambda a: setattr(a, "desired_state", "stopped"))   # what stop() does in phase 0
+    assert app.register.get(aid).status == "active"
+    with pytest.raises(DelegationDenied):
+        app.delegation.mint_child(res["delegation_token"], {"name": "c", "max_budget_usd": 0.1, "models": ["m1"]})
+    with pytest.raises(DelegationDenied):
+        app.delegation.authorize(res["delegation_token"], "m1")
+    with pytest.raises(Forbidden):
+        app.access.resolve_subject("sso-sub")
+    assert len(app.ports.gateway.keys) == 1      # no key minted at first use
+
+
+def test_quarantine_refuses_when_unmanaged_blast_radius_grew_or_preview_expired(app):
+    _agent(app, team="lab")
+    pv = app.quarantine.preview(Selector(labels={"govpilot.team": "lab"}), OPS)
+    assert pv["counts"]["unmanaged_workloads"] == 0
+    app.ports.orchestrator.add(Workload(id="shadow", name="shadow", image="img:1",
+                                        labels={"govpilot.team": "lab"}, host="mem-host", running=True))
+    with pytest.raises(StalePreview):
+        app.quarantine.execute(pv["preview_id"], OPS, "x")
+    # dual control: approvals that land after the preview expired do not fire the action
+    _agent(app, team="lab2")
+    pv = app.quarantine.preview(Selector(all=True), OPS)
+    act = app.quarantine.execute(pv["preview_id"], OPS, "incident")
+    app.quarantine.approve(act["action_id"], BOB)
+    app.ports.repo.update("previews", pv["preview_id"], lambda p: {**p, "expires_at": 0})
+    with pytest.raises(StalePreview):
+        app.quarantine.approve(act["action_id"], CAROL)
+    assert app.ports.repo.get("quarantine_actions", act["action_id"])["status"] == "stale"
+    assert all(a.status == "active" for a in app.register.list())

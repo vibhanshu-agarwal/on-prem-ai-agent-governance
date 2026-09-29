@@ -153,12 +153,22 @@ class QuarantineService:
         action = self.p.repo.get(ACTIONS, action_id)
         prev = self.p.repo.get(PREVIEWS, action["preview_id"])
         sel = Selector.from_dict(action["selector"])
+        if time.time() > prev["expires_at"]:
+            # approvals can arrive long after the humans looked; an old blast radius is not consent for today's
+            self.p.repo.update(ACTIONS, action_id, lambda a: {**a, "status": "stale", "stale_reason": "preview expired"})
+            self.p.audit.append(actor, "quarantine.stale", action_id, {"reason": "preview expired"}, severity="warning")
+            raise StalePreview("preview expired before the action could run; re-preview")
         agents, unmanaged = self.resolve(sel)
         new = sorted({a.agent_id for a in agents} - set(prev["agent_ids"]))
-        if new:
-            self.p.repo.update(ACTIONS, action_id, lambda a: {**a, "status": "stale", "stale_new_agents": new})
-            self.p.audit.append(actor, "quarantine.stale", action_id, {"new_agents": new}, severity="warning")
-            raise StalePreview("selector now matches agents not shown in the preview; re-preview", new_agents=new)
+        seen_unmanaged = {u["id"] for u in prev.get("unmanaged_workloads", [])}
+        new_unmanaged = sorted(w.name for w in unmanaged if w.id not in seen_unmanaged)
+        if new or new_unmanaged:
+            self.p.repo.update(ACTIONS, action_id, lambda a: {**a, "status": "stale", "stale_new_agents": new,
+                                                               "stale_new_unmanaged": new_unmanaged})
+            self.p.audit.append(actor, "quarantine.stale", action_id,
+                                {"new_agents": new, "new_unmanaged": new_unmanaged}, severity="warning")
+            raise StalePreview("selector now matches agents or workloads not shown in the preview; re-preview",
+                               new_agents=new, new_unmanaged=new_unmanaged)
         rule_id = "qr-" + uuid.uuid4().hex[:12]
         self.p.repo.put(RULES, rule_id, {"rule_id": rule_id, "action_id": action_id, "selector": sel.to_dict(),
                                          "active": True, "created_at": time.time()})

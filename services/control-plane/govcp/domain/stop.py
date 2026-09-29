@@ -198,10 +198,38 @@ class StopService:
 
     # ---------------------------------------------------------------- verify
     def verify(self, agents: list[Agent], workloads: list[Workload]) -> dict[str, Any]:
+        """Verify against the live systems, not against what the stop saw earlier.
+
+        Workloads are re-listed by the agents' selectors and keys re-scanned by metadata, so a
+        container re-created or a key minted between the block phase and here fails verification
+        instead of slipping past it."""
         checks: list[dict[str, Any]] = []
 
         def add(kind, target, ok, detail=""):
             checks.append({"check": kind, "target": target, "ok": bool(ok), "detail": detail})
+
+        by_id = {w.id: w for w in workloads}
+        for a in agents:
+            found, err = _safe(self.p.orchestrator.list_workloads, labels=a.workload_labels)
+            if err:
+                add("workload.listed", a.agent_id, False, err)
+            for w in found or []:
+                if w.id not in by_id:
+                    by_id[w.id] = w
+                    add("workload.appeared_during_stop", w.name, False, "not seen when the stop started")
+        workloads = list(by_id.values())
+
+        def check_stray(a: Agent):
+            found, err = _safe(self.p.gateway.find_keys, agent_id=a.agent_id)
+            known = {k.key_hash for k in a.gateway_keys}
+            rows = [("gateway.keys_listed", a.agent_id, False, err)] if err else []
+            rows += [("gateway.key_blocked", k.alias or k.key_hash[:12], k.blocked, "found by metadata")
+                     for k in (found or []) if k.key_hash not in known]
+            return rows
+
+        for rows in _pmap(check_stray, agents):
+            for r in rows:
+                add(*r)
 
         def check_key(pair):
             a, k = pair

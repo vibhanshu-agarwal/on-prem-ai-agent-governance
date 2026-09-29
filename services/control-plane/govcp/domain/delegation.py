@@ -18,7 +18,7 @@ from typing import Any
 from . import macaroon
 from .context import Ports
 from .errors import Conflict, DelegationDenied, Forbidden, InvalidRequest
-from .models import STATUS_ACTIVE, Agent, DiscoveryObservation, Principal
+from .models import DESIRED_RUNNING, STATUS_ACTIVE, Agent, DiscoveryObservation, Principal
 from .policy import Policy
 from .register import RegisterService
 from .repository import DELEGATIONS
@@ -71,7 +71,9 @@ class DelegationService:
                 problems.append(f"token chain {scope.chain} does not match registered lineage {lineage}")
             for aid in lineage:
                 a = self.register.find(aid)
-                if a is None or a.status != STATUS_ACTIVE:
+                # desired_state flips to stopped at the very start of a stop, status only at its end:
+                # checking both closes the window in which a stop in progress could still mint or use tokens
+                if a is None or a.status != STATUS_ACTIVE or a.desired_state != DESIRED_RUNNING:
                     problems.append(f"{aid} in the chain is not active")
         if problems:
             self._alert("delegation.chain_rejected", scope.holder, {"purpose": purpose, "problems": problems,
@@ -177,8 +179,9 @@ class AccessService:
         return self._key_for(agent, via="delegation", ref=scope.holder)
 
     def _key_for(self, agent: Agent, via: str, ref: str) -> dict[str, Any]:
-        if agent.status != STATUS_ACTIVE:
-            raise Forbidden(f"agent {agent.agent_id!r} is {agent.status}")
+        if agent.status != STATUS_ACTIVE or agent.desired_state != DESIRED_RUNNING:
+            # a stop in progress must not be able to mint a fresh (unblocked) key at first use
+            raise Forbidden(f"agent {agent.agent_id!r} is {agent.status} (desired: {agent.desired_state})")
         raw = self.register.raw_key(agent)
         if raw is None:
             # map at first use: mint the agent's own blockable key now

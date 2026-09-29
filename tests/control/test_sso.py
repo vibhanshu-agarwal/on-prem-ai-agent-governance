@@ -115,3 +115,16 @@ def test_sso_network_reaches_only_auth_proxy_and_idp(live):
     res = dict(line.split() for line in out.strip().splitlines())
     assert res == {"sso-gateway": "OPEN", "idp": "OPEN", "gateway": "BLOCKED", "control-plane": "BLOCKED",
                    "mock-local": "BLOCKED", "1.1.1.1": "BLOCKED"}, res
+
+
+def test_machine_clients_cannot_read_the_register_or_audit_log(make_agent):
+    """A valid token is not read access: an agent that asks the IdP for the control-plane audience gets 403
+    on the register, stop reports, quarantine state and audit log (viewer/operator/approver/owner only)."""
+    client_id, secret, _ = _sso_agent(make_agent)
+    tok = cpclient.client_token(client_id, secret, audience="govpilot-control-plane").json()["access_token"]
+    h = {"Authorization": f"Bearer {tok}"}
+    for path in ("/v1/agents", "/v1/stops", "/v1/quarantine/actions", "/v1/audit", "/v1/alerts",
+                 "/v1/discovery/proposals"):
+        assert httpx.get(cpclient.CP_URL + path, headers=h, timeout=10).status_code == 403, path
+    assert httpx.get(cpclient.CP_URL + "/v1/agents", headers={"Authorization": "Bearer x.y.z"},
+                     timeout=10).status_code == 401

@@ -59,8 +59,10 @@ class OIDCIdentityProvider(IdentityProvider):
                                 leeway=self.leeway, options={"require": ["exp", "iat", "sub", "iss", "aud"]})
         except jwt.PyJWTError as e:
             raise Unauthorized(f"invalid token: {e}") from None
+        # `kind` decides who counts as a human for human-only actions (bulk quarantine, approvals). A token
+        # that does not say is treated as a machine: an IdP that lacks the claim must map it explicitly.
         return Principal(subject=claims["sub"], roles=list(claims.get("roles") or []),
-                         teams=list(claims.get("teams") or []), kind=claims.get("kind", "user"), claims=claims)
+                         teams=list(claims.get("teams") or []), kind=claims.get("kind") or "client", claims=claims)
 
     def _admin(self, method, path):
         if not self.admin_url or not self.admin_token:

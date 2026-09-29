@@ -110,8 +110,10 @@ async def proxy(path: str, request: Request):
         return _err(status if status in (401, 403, 429, 503) else 403, "auth_error",
                     d.get("message") or str(d)[:200])
 
+    # drop every header the gateway could read a credential or identity from; only ours go upstream
     headers = {k: v for k, v in request.headers.items()
-               if k.lower() not in ("authorization", "host", "content-length", "connection")}
+               if k.lower() not in ("authorization", "host", "content-length", "connection",
+                                    "api-key", "x-api-key", "x-litellm-api-key", "x-govpilot-agent")}
     headers["authorization"] = f"Bearer {d['gateway_key']}"
     headers["x-govpilot-agent"] = d["agent_id"]
     req = client.build_request(request.method, f"{GATEWAY}/v1/{path}", headers=headers, content=raw,

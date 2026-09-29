@@ -141,6 +141,17 @@ def require(p: Principal, *roles: str):
         raise Forbidden(f"requires one of roles {list(roles)}")
 
 
+# Read access to the register, stop reports, quarantine state and audit log is for people (and services)
+# with one of these roles. A machine client that merely holds a valid token for this audience
+# (an agent, a feed) gets nothing beyond the endpoints its own role names.
+READ_ROLES = ("viewer", "operator", "approver", "owner")
+
+
+def reader(p: Principal = Depends(principal)) -> Principal:
+    require(p, *READ_ROLES)
+    return p
+
+
 # ------------------------------------------------------------------ startup
 def seed_agents(a: App) -> None:
     system = Principal(subject="seed", roles=["admin"], kind="client")
@@ -185,10 +196,12 @@ def ingest_estop_journal(a: App) -> int:
 
 
 def _reconcile_loop(a: App, interval: float, stop_evt: threading.Event):
+    n = 0
     while not stop_evt.wait(interval):
+        n += 1
         try:
             a.reconciler.run_once()
-            if int(time.time()) % 10 == 0:
+            if n % 10 == 0:   # every 10th tick (a wall-clock modulo could skip ticks when a tick runs long)
                 ingest_estop_journal(a)
         except Exception as e:  # noqa: BLE001
             log.warning("reconcile error: %s", e)
@@ -248,17 +261,17 @@ def create_agent(body: AgentCreate, p: Principal = Depends(principal)):
 
 
 @api.get("/v1/agents", tags=["agents"])
-def list_agents(team: str | None = None, status: str | None = None, p: Principal = Depends(principal)):
+def list_agents(team: str | None = None, status: str | None = None, p: Principal = Depends(reader)):
     return {"agents": [a.to_dict() for a in app_().register.list(team=team, status=status)]}
 
 
 @api.get("/v1/agents/{agent_id}", tags=["agents"])
-def get_agent(agent_id: str, p: Principal = Depends(principal)):
+def get_agent(agent_id: str, p: Principal = Depends(reader)):
     return app_().register.get(agent_id).to_dict()
 
 
 @api.get("/v1/agents/{agent_id}/live", tags=["agents"], summary="Live status: keys, spend, workloads")
-def live(agent_id: str, p: Principal = Depends(principal)):
+def live(agent_id: str, p: Principal = Depends(reader)):
     a = app_()
     ag = a.register.get(agent_id)
     keys = []
@@ -291,14 +304,14 @@ def resume_agent(agent_id: str, body: ReasonIn, p: Principal = Depends(principal
 
 
 @api.get("/v1/stops", tags=["stop"])
-def list_stops(limit: int = 20, p: Principal = Depends(principal)):
+def list_stops(limit: int = 20, p: Principal = Depends(reader)):
     reps = sorted(app_().ports.repo.list(STOP_REPORTS), key=lambda r: r["started_at"], reverse=True)[:limit]
     return {"stops": [{k: r[k] for k in ("stop_id", "actor", "reason", "agents", "timings_ms", "within_target")}
                       | {"verified": r["verify"]["ok"]} for r in reps]}
 
 
 @api.get("/v1/stops/{stop_id}", tags=["stop"])
-def get_stop(stop_id: str, p: Principal = Depends(principal)):
+def get_stop(stop_id: str, p: Principal = Depends(reader)):
     r = app_().ports.repo.get(STOP_REPORTS, stop_id)
     if not r:
         raise NotFound("no such stop")
@@ -317,13 +330,13 @@ def q_execute(body: ExecuteIn, p: Principal = Depends(principal)):
 
 
 @api.get("/v1/quarantine/actions", tags=["quarantine"])
-def q_list(p: Principal = Depends(principal)):
+def q_list(p: Principal = Depends(reader)):
     acts = sorted(app_().ports.repo.list(ACTIONS), key=lambda x: x["requested_at"], reverse=True)
     return {"actions": [{k: v for k, v in x.items() if k != "report"} for x in acts]}
 
 
 @api.get("/v1/quarantine/actions/{action_id}", tags=["quarantine"])
-def q_get(action_id: str, p: Principal = Depends(principal)):
+def q_get(action_id: str, p: Principal = Depends(reader)):
     x = app_().ports.repo.get(ACTIONS, action_id)
     if not x:
         raise NotFound("no such action")
@@ -341,7 +354,7 @@ def q_lift(action_id: str, body: LiftIn, p: Principal = Depends(principal)):
 
 
 @api.get("/v1/quarantine/rules", tags=["quarantine"])
-def q_rules(p: Principal = Depends(principal)):
+def q_rules(p: Principal = Depends(reader)):
     return {"rules": app_().quarantine.active_rules()}
 
 
@@ -357,7 +370,7 @@ def d_submit(body: ProposalIn, p: Principal = Depends(principal)):
 
 
 @api.get("/v1/discovery/proposals", tags=["discovery"])
-def d_list(status: str | None = Query(None), p: Principal = Depends(principal)):
+def d_list(status: str | None = Query(None), p: Principal = Depends(reader)):
     return {"proposals": app_().discovery.list(status)}
 
 
@@ -396,19 +409,19 @@ def resolve(body: ResolveIn, p: Principal = Depends(principal)):
 # ------------------------------------------------------------------ audit
 @api.get("/v1/audit", tags=["audit"])
 def audit_list(limit: int = 100, since_seq: int = 0, action_prefix: str | None = None,
-               severity: str | None = None, target: str | None = None, p: Principal = Depends(principal)):
+               severity: str | None = None, target: str | None = None, p: Principal = Depends(reader)):
     recs = app_().ports.audit.list(limit=limit, since_seq=since_seq, action_prefix=action_prefix,
                                    severity=severity, target=target)
     return {"records": [r.to_dict() for r in recs]}
 
 
 @api.get("/v1/audit/verify", tags=["audit"], summary="Recompute the hash chain")
-def audit_verify(p: Principal = Depends(principal)):
+def audit_verify(p: Principal = Depends(reader)):
     return app_().ports.audit.verify().to_dict()
 
 
 @api.get("/v1/alerts", tags=["audit"], summary="Audit records with severity=alert")
-def alerts(limit: int = 50, since_seq: int = 0, p: Principal = Depends(principal)):
+def alerts(limit: int = 50, since_seq: int = 0, p: Principal = Depends(reader)):
     return {"alerts": [r.to_dict() for r in app_().ports.audit.list(limit=limit, since_seq=since_seq,
                                                                   severity="alert")]}
 
