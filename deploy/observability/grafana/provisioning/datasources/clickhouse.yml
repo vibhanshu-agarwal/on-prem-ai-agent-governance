@@ -1,0 +1,15 @@
+apiVersion: 1
+datasources:
+  - name: OpenLIT ClickHouse
+    uid: openlit-ch
+    type: grafana-clickhouse-datasource
+    isDefault: true
+    jsonData:
+      host: clickhouse
+      port: 9000
+      protocol: native
+      secure: false
+      username: $OBS_CH_USER
+      defaultDatabase: openlit
+    secureJsonData:
+      password: $OBS_CH_PASSWORD

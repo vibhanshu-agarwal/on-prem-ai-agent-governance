@@ -1,0 +1,682 @@
+{
+  "uid": "govpilot-cost",
+  "title": "Cost by agent and team",
+  "tags": [
+    "govpilot",
+    "cost"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "description": "Per-agent and per-team AI spend from the gateway's OpenTelemetry spans (OpenLIT ClickHouse).",
+  "templating": {
+    "list": [
+      {
+        "name": "team",
+        "label": "Team",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "openlit-ch"
+        },
+        "multi": true,
+        "includeAll": true,
+        "allValue": null,
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "query": {
+          "rawSql": "SELECT DISTINCT SpanAttributes['metadata.user_api_key_team_alias'] FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) ORDER BY 1",
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table"
+        }
+      },
+      {
+        "name": "agent",
+        "label": "Agent",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "openlit-ch"
+        },
+        "multi": true,
+        "includeAll": true,
+        "allValue": null,
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "query": {
+          "rawSql": "SELECT DISTINCT coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) ORDER BY 1",
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table"
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Spend",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT sum(toFloat64OrZero(SpanAttributes['gen_ai.cost.total_cost'])) AS spend FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent)",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3b82f6"
+          },
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Calls",
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT count() AS calls FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent)",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#8b5cf6"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Tokens",
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.total_tokens'])) AS tokens FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent)",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#14b8a6"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Avg cost per call",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT sum(toFloat64OrZero(SpanAttributes['gen_ai.cost.total_cost'])) / greatest(count(), 1) AS c FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent)",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#f59e0b"
+          },
+          "decimals": 6
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "p95 gateway latency",
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT quantile(0.95)(Duration) / 1e9 AS s FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent)",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#ec4899"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Errored calls",
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT countIf(StatusCode = 'Error') AS e FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent)",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#ef4444"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Spend per agent over time",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 16,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "rawSql": "SELECT $__timeInterval(Timestamp) AS time, coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) AS agent, sum(toFloat64OrZero(SpanAttributes['gen_ai.cost.total_cost'])) AS spend FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent) GROUP BY time, agent ORDER BY time",
+          "queryType": "timeseries"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 5,
+          "displayName": "${__field.labels.agent}",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            },
+            "lineWidth": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "piechart",
+      "title": "Spend by model",
+      "gridPos": {
+        "x": 16,
+        "y": 4,
+        "w": 8,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT SpanAttributes['gen_ai.request.model'] AS model, sum(toFloat64OrZero(SpanAttributes['gen_ai.cost.total_cost'])) AS spend FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent) GROUP BY model ORDER BY spend DESC",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 5
+        },
+        "overrides": []
+      },
+      "options": {
+        "pieType": "donut",
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": true,
+          "fields": "/^spend$/"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "bargauge",
+      "title": "Spend by team",
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT SpanAttributes['metadata.user_api_key_team_alias'] AS team, sum(toFloat64OrZero(SpanAttributes['gen_ai.cost.total_cost'])) AS spend FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent) GROUP BY team ORDER BY spend DESC",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 5,
+          "color": {
+            "mode": "continuous-BlPu"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": true,
+          "fields": "/^spend$/"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Agent leaderboard",
+      "gridPos": {
+        "x": 8,
+        "y": 13,
+        "w": 16,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) AS agent, SpanAttributes['metadata.user_api_key_team_alias'] AS team, count() AS calls, sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.total_tokens'])) AS tokens, sum(toFloat64OrZero(SpanAttributes['gen_ai.cost.total_cost'])) AS spend, sum(toFloat64OrZero(SpanAttributes['gen_ai.cost.total_cost'])) / count() AS cost_per_call, quantile(0.95)(Duration) / 1e9 AS p95_latency_s, countIf(StatusCode = 'Error') AS errors FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent) GROUP BY agent, team ORDER BY spend DESC",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "spend"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 5
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_per_call"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_latency_s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 3
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "md"
+      }
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Most expensive runs (run_id from the agent)",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "openlit-ch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "openlit-ch"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT extract(SpanAttributes['metadata.requester_metadata'], '''run_id'': ''([^'']+)''') AS run_id, coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) AS agent, SpanAttributes['metadata.user_api_key_team_alias'] AS team, SpanAttributes['gen_ai.request.model'] AS model, count() AS calls, sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.total_tokens'])) AS tokens, sum(toFloat64OrZero(SpanAttributes['gen_ai.cost.total_cost'])) AS spend FROM otel_traces WHERE SpanName = 'litellm_request' AND $__timeFilter(Timestamp) AND SpanAttributes['metadata.user_api_key_team_alias'] IN ($team) AND coalesce(nullIf(extract(SpanAttributes['metadata.user_api_key_auth_metadata'], '''agent_id'': ''([^'']+)'''), ''), SpanAttributes['metadata.user_api_key_alias']) IN ($agent) AND extract(SpanAttributes['metadata.requester_metadata'], '''run_id'': ''([^'']+)''') != '' GROUP BY run_id, agent, team, model ORDER BY spend DESC LIMIT 15",
+          "queryType": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "spend"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 6
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+# T6 discovery service. Own compose project; only joins existing networks, never touches other services.
+#   scripts/discovery-up.sh   (registers the feed IdP clients, builds the image, starts it)
+#
+# Networks (all pre-existing)
+#   govpilot_cpinternal   control plane + IdP (proposals and tokens)
+#   govpilot_obs          OpenLIT ClickHouse (call records) and the OpenLIT Controller REST API
+# The Docker socket is used read-only by the code (list/inspect/events/logs) but a socket mount is
+# root-equivalent on the host; see docs/results/T6.md.
+name: govpilot-discovery
+
+services:
+  discovery:
+    image: govpilot/discovery:1
+    build: ../services/discovery
+    container_name: gov-discovery
+    restart: unless-stopped
+    environment:
+      GOVDISC_CONFIG: /etc/govdisc/config.yaml
+      IDP_CLIENT_SECRET_FEED_DOCKER_EVENTS: ${IDP_CLIENT_SECRET_FEED_DOCKER_EVENTS:?run scripts/discovery-up.sh}
+      IDP_CLIENT_SECRET_FEED_GATEWAY_LOGS: ${IDP_CLIENT_SECRET_FEED_GATEWAY_LOGS:?}
+      IDP_CLIENT_SECRET_FEED_OPENLIT_CONTROLLER: ${IDP_CLIENT_SECRET_FEED_OPENLIT_CONTROLLER:?}
+      OBS_CH_USER: ${OBS_CH_USER:-openlit}
+      OBS_CH_PASSWORD: ${OBS_CH_PASSWORD:?}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./discovery/config.yaml:/etc/govdisc/config.yaml:ro
+      - discoverydata:/data
+    networks:
+      cpinternal: {}
+      obs: {}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time;t=float(open('/data/heartbeat').read());raise SystemExit(0 if time.time()-t<30 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+networks:
+  cpinternal:
+    name: govpilot_cpinternal
+    external: true
+  obs:
+    name: govpilot_obs
+    external: true
+
+volumes:
+  discoverydata:

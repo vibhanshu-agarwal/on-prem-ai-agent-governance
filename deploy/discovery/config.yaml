@@ -1,0 +1,63 @@
+# Discovery service config (T6). Environment-specific values live here; secrets only in env.
+#
+# Adopting in another environment: change the `type:` of an adapter (containers / access_log / call_records /
+# control_plane) or add a feed; the feeds themselves do not change.
+#   containers      docker            -> a Kubernetes pod lister
+#   access_log      docker_logs       -> any log platform that can list refused gateway calls
+#   call_records    clickhouse        -> any store of gateway telemetry (per-key call summaries)
+#   control_plane   http              -> another proposal queue
+control_plane:
+  type: http
+  url: http://control-plane:8100
+  token_url: http://idp:8300/token
+  audience: govpilot-control-plane
+
+poll_interval_s: 3
+backlog_max: 200
+state_path: /data/state.json          # budget counters, seen fingerprints, unsent backlog
+heartbeat_path: /data/heartbeat
+
+# Networks agents use to reach the gateway. A container attached to one of these is an agent-shaped workload.
+governed_networks: [govpilot_agents, govpilot_agents_sso]
+
+platform:                              # the platform's own containers are not shadow AI
+  ignore_names: ["^gov-", "^t2-", "^optimus"]
+  ignore_labels: ["govpilot.test"]     # throwaway containers made by the T3 test-suite
+  ignore_label_values:                 # compose projects that ARE the platform (also catches recreate-time names)
+    com.docker.compose.project: [govpilot, govpilot-obs, govpilot-discovery, govpilot-t2]
+
+hints:                                 # where to look for a probable owner / team on a workload
+  owner_label_keys: [govpilot.owner, owner, org.opencontainers.image.authors, maintainer]
+  team_label_keys: [govpilot.team, team]
+
+feeds:
+  docker-events:                       # (a) new containers on the governed networks
+    enabled: true
+    type: docker_events
+    client_id: docker-events           # IdP client with role `feed` (static client from the control-plane config)
+    secret_env: IDP_CLIENT_SECRET_FEED_DOCKER_EVENTS
+    daily_limit: 50                    # mirror of deploy/control-plane/config.yaml policy.discovery.feeds
+    settle_s: 5                        # must still be running after 5 s (skips one-second probes/test runners)
+  gateway-logs:                        # (b) refused calls + unregistered keys seen at the gateway
+    enabled: true
+    type: gateway_logs
+    client_id: gateway-logs            # registered by scripts/discovery-up.sh through the IdP admin API
+    secret_env: IDP_CLIENT_SECRET_FEED_GATEWAY_LOGS
+    daily_limit: 50
+    min_refused_calls: 1
+    ignore_agent_id_prefixes: []
+    access_log:
+      type: docker_logs
+      containers: [gov-gateway, gov-gateway-otel]
+    call_records:
+      type: clickhouse
+      url: http://gov-obs-clickhouse:8123
+      user_env: OBS_CH_USER
+      password_env: OBS_CH_PASSWORD
+  openlit-controller:                  # (c) eBPF: containers talking straight to an LLM provider
+    enabled: true
+    type: openlit_controller
+    client_id: openlit-controller
+    secret_env: IDP_CLIENT_SECRET_FEED_OPENLIT_CONTROLLER
+    daily_limit: 50
+    controller_url: http://gov-obs-controller:4321
