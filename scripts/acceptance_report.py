@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render docs/results/ACCEPTANCE.md from the measured results of scripts/acceptance.sh:
   .local/acceptance/results.json          tests/acceptance (one entry per acceptance id, with metrics)
-  .local/acceptance/junit-<suite>.xml     the task suites (tests/foundation ... tests/budget)
+  .local/acceptance/junit-<suite>.xml     the task suites (tests/hardening ... tests/budget)
   .local/acceptance/pilot_sim.json        scripts/pilot_sim.py
 A test that did not run is shown as NOT RUN; a failure is shown as FAIL with its message. Nothing is inferred.
 """
@@ -17,8 +17,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RES = ROOT / ".local" / "acceptance"
 OUT = ROOT / "docs" / "results" / "ACCEPTANCE.md"
-SUITES = ["foundation", "policy", "control", "discovery", "agents", "guardrails", "budget"]
+SUITES = ["hardening", "foundation", "policy", "control", "discovery", "agents", "guardrails", "budget"]
 SUITE_NOTE = {
+    "hardening": "T9 edge allowlist, fail-closed, read-only non-root, caps, digest pins",
     "foundation": "T1 stack, isolation, keys", "policy": "T7 signed bundles, admission, rollback",
     "control": "T3 register, stop, quarantine, estop, audit, delegation", "discovery": "T6 feeds, eBPF, OTel",
     "agents": "T4 run ids, retries, tools, delegation, attribution", "guardrails": "T5 PII, injection, tools, fail modes",
@@ -197,7 +198,7 @@ def main() -> int:
     w("")
     w(f"Generated {time.strftime('%Y-%m-%d %H:%M')} by `scripts/acceptance.sh` (renderer `scripts/acceptance_report.py`) "
       f"at commit `{commit}` on the full local stack (`scripts/up.sh`: LiteLLM v1.100.3 + T2 budget guard + T4 "
-      "attribution + T5 guardrails + OTel, control plane, OpenLIT/ClickHouse/Grafana, discovery, three sample agents). "
+      "attribution + T5 guardrails + OTel behind the T9 hardening overlay (allowlisting edge proxy, read-only non-root gateway), control plane, OpenLIT/ClickHouse/Grafana, discovery, three sample agents). "
       "Every number below was measured by the run; nothing is carried over from earlier task reports.")
     w("")
     w(f"**{passed} of {len(ids)} acceptance tests pass.** Twelve map to report section 8, the rest to the July "

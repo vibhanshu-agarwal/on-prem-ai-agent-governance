@@ -405,6 +405,17 @@ def d_reject(pid: str, body: ReasonIn, p: Principal = Depends(principal)):
     return app_().discovery.reject(pid, p, body.reason)
 
 
+@api.get("/v1/discovery/feeds", tags=["discovery"], summary="Per-feed daily proposal caps and today's usage")
+def d_feeds(p: Principal = Depends(reader)):
+    return {"feeds": app_().discovery.feed_usage()}
+
+
+@api.post("/v1/discovery/feeds/{feed}/reset-count", tags=["discovery"],
+          summary="Human admin: zero today's proposal counter of one feed (audited)")
+def d_reset_feed(feed: str, body: ReasonIn, p: Principal = Depends(principal)):
+    return app_().discovery.reset_feed_count(feed, p, body.reason)
+
+
 # ------------------------------------------------------------------ delegation
 @api.post("/v1/delegations", tags=["delegation"], status_code=201,
           summary="Mint a sub-agent credential by attenuating the parent's token")

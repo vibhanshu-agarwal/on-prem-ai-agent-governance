@@ -3,7 +3,7 @@
 #
 #   scripts/acceptance.sh                   task suites + acceptance suite + pilot simulation + report (~80 min)
 #   scripts/acceptance.sh --fresh           first scripts/down.sh --purge && scripts/up.sh (clean-room run)
-#   scripts/acceptance.sh --only-acceptance skip the task suites (tests/foundation ... tests/budget)
+#   scripts/acceptance.sh --only-acceptance skip the task suites (tests/hardening ... tests/budget)
 #   scripts/acceptance.sh --report          only re-render the report from the last results
 #   T8_RESTART_ITERATIONS=21                restarts in the M-02b drill (default 21)
 #
@@ -41,7 +41,7 @@ if [[ $ONLY_REPORT == 0 ]]; then
     || { echo "stack not running: bash scripts/up.sh"; exit 1; }
 
   if [[ $SUITES == 1 ]]; then
-    for s in foundation policy discovery control agents guardrails budget; do
+    for s in hardening foundation policy discovery control agents guardrails budget; do
       step "tests/$s"
       "$PY" -m pytest "tests/$s" -q -p no:cacheprovider --junitxml="$RES/junit-$s.xml" -o junit_family=xunit2 \
         2>&1 | tail -5 || true

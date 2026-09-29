@@ -102,6 +102,41 @@ class DiscoveryService:
             "suggested_team": obs.suggested_team, "budget_usd": 0.0})
         return prop
 
+    def feed_usage(self) -> list[dict[str, Any]]:
+        """Today's proposal count against each configured feed's daily cap."""
+        today = _day(time.time())
+        out = []
+        for name, fp in sorted(self.policy.discovery.feeds.items()):
+            row = self.p.repo.get(KV, f"feedcount:{name}:{today}") or {"count": 0}
+            out.append({"feed": name, "day": today, "count": row["count"], "daily_limit": fp.daily_limit})
+        return out
+
+    def reset_feed_count(self, feed: str, actor: Principal, reason: str) -> dict[str, Any]:
+        """Zero today's proposal counter of one feed (demos, repeated test runs). A human admin action, audited:
+        a feed (or any machine client) must not be able to lift the cap that bounds it. Raising the cap itself
+        is a policy change (policy.discovery.feeds.<feed>.daily_limit in the control-plane config)."""
+        if actor.kind != "user" or "admin" not in actor.roles:
+            raise Forbidden("resetting a feed's daily counter is a human admin action")
+        if not (reason or "").strip():
+            raise InvalidRequest("reason required")
+        if feed not in self.policy.discovery.feeds:
+            raise NotFound(f"feed {feed!r} is not configured")
+        today = _day(time.time())
+        counter = f"feedcount:{feed}:{today}"
+        self.p.repo.insert(KV, counter, {"count": 0})
+        prev: dict[str, int] = {}
+
+        def zero(d):
+            prev["count"] = d["count"]
+            d["count"] = 0
+            return d
+        self.p.repo.update(KV, counter, zero)
+        limit = self.policy.discovery.feed(feed).daily_limit
+        self.p.audit.append(actor.subject, "discovery.feed_count_reset", feed,
+                            {"day": today, "previous_count": prev["count"], "daily_limit": limit, "reason": reason},
+                            severity="warning")
+        return {"feed": feed, "day": today, "previous_count": prev["count"], "count": 0, "daily_limit": limit}
+
     def list(self, status: str | None = None) -> list[dict[str, Any]]:
         out = self.p.repo.list(PROPOSALS)
         if status:

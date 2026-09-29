@@ -92,6 +92,24 @@ bash scripts/down.sh --volumes   # ALSO delete keys, spend, register, audit, tel
 bash scripts/control-plane-down.sh   # only the control-plane services (agents keep running, keys still enforced)
 ```
 
+**Discovery proposal caps (demos, repeated test runs)**
+
+Each discovery feed may file at most `daily_limit` new proposals per UTC day (`policy.discovery.feeds` in
+`deploy/control-plane/config.yaml`), so a noisy or compromised feed cannot flood the approval queue. Two full
+acceptance runs in one UTC day exhaust the `gateway-logs` budget, after which S8-05 and the live discovery tests fail
+with "never reached the pending queue". Check and reset (human admin, e.g. alice; audited as
+`discovery.feed_count_reset`, severity warning; a feed's own client cannot do it):
+
+```bash
+curl -s localhost:8100/v1/discovery/feeds -H "Authorization: Bearer $TOK"          # count / daily_limit per feed
+curl -s -X POST localhost:8100/v1/discovery/feeds/gateway-logs/reset-count -H "Authorization: Bearer $TOK" \
+     -H 'content-type: application/json' -d '{"reason":"second acceptance run today"}'
+```
+
+Raising a cap is a policy change: edit `daily_limit` in the config and restart the control plane
+(`bash scripts/control-plane-up.sh`). Do not edit the `feedcount:*` rows in the database by hand; that bypasses the
+audit log.
+
 <a id="3-stop-one-agent"></a>
 ## 3. Stop one agent
 

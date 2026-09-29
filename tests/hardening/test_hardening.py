@@ -8,6 +8,7 @@
 """
 import json
 import re
+import time
 
 import pytest
 
@@ -65,9 +66,87 @@ def _run_probe(host, key, routes, network):
 def test_agent_cannot_reach_admin_routes_through_the_edge(request, with_key):
     key = request.getfixturevalue("agent_key") if with_key else ""
     res = _run_probe("http://gateway:4000", key, BLOCKED, "govpilot_agents")
-    # every one must be answered by the proxy itself (403 forbidden_route) or be a plain 404/405 from it
-    leaked = {k: v for k, v in res.items() if not (v[0] == 403 and "forbidden_route" in v[1]) and v[0] not in (404, 405)}
+    # every one must be answered by the proxy itself: its 403 forbidden_route, or an nginx-generated error page
+    # (400 for a path that climbs above the root). A 404/405 from LiteLLM would mean the request reached it.
+    leaked = {k: v for k, v in res.items()
+              if not (v[0] == 403 and "forbidden_route" in v[1]) and "<center>nginx</center>" not in v[1]}
     assert not leaked, f"routes that reached the gateway (or failed some other way): {leaked}"
+
+
+_RAW = r'''
+import json, socket
+CRLF = "\r\n"
+def send(lines, body=""):
+    s = socket.create_connection(("gateway", 4000), timeout=8)
+    s.sendall((CRLF.join(lines) + CRLF + CRLF + body).encode()); d = b""
+    try:
+        while len(d) < 20000:
+            c = s.recv(65536)
+            if not c: break
+            d += c
+    except OSError:
+        pass
+    s.close(); return d.decode("latin1")
+H = ["Host: gateway", "Connection: close", "Authorization: Bearer " + KEY]
+out = {}
+out["absolute-uri"] = send(["GET http://gateway-core:4000/key/list HTTP/1.1"] + H)
+for h in ("X-Original-URL", "X-Rewrite-URL", "X-HTTP-Method-Override", "X-Forwarded-Prefix"):
+    v = "DELETE" if "Method" in h else "/key/list"
+    out[h] = send(["GET /v1/models HTTP/1.1"] + H + [h + ": " + v])
+out["websocket"] = send(["GET /v1/realtime?model=mock-local HTTP/1.1", "Host: gateway", "Upgrade: websocket",
+                         "Connection: Upgrade", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+                         "Sec-WebSocket-Version: 13"])
+smuggled = "0" + CRLF + CRLF + "GET /key/list HTTP/1.1" + CRLF + "Host: x" + CRLF + CRLF
+out["cl-te"] = send(["POST /v1/chat/completions HTTP/1.1", "Host: gateway", "Transfer-Encoding: chunked",
+                     "Content-Length: %d" % len(smuggled)], smuggled)
+out["pipelined"] = send(["GET /v1/models HTTP/1.1", "Host: gateway", "", "GET /key/list HTTP/1.1"] + H)
+out["http09"] = send(["GET /key/list"])
+print(json.dumps(out))
+'''
+
+
+def test_edge_ignores_rewrite_headers_absolute_uris_upgrades_and_smuggling(agent_key):
+    """Raw-socket probes the urllib list above cannot express (with a real agent key). None may produce an admin
+    answer; the rewrite headers must leave /v1/models answering with the model list."""
+    r = probe(f"KEY = {agent_key!r}\n" + _RAW)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    for k, v in out.items():
+        assert '"keys"' not in v and "user_api_key" not in v, (k, v[:400])
+    assert "forbidden_route" in out["absolute-uri"] and "forbidden_route" in out["websocket"]
+    assert not out["websocket"].startswith("HTTP/1.1 101"), out["websocket"][:300]
+    for h in ("X-Original-URL", "X-Rewrite-URL", "X-HTTP-Method-Override", "X-Forwarded-Prefix"):
+        assert '"object":"list"' in out[h], (h, out[h][-300:])        # still just the model list
+    assert out["cl-te"].startswith("HTTP/1.1 400") and out["cl-te"].count("HTTP/1.1 ") == 1, out["cl-te"][:300]
+    assert out["pipelined"].count("forbidden_route") == 1, out["pipelined"][-400:]
+    assert "forbidden_route" in out["http09"]
+
+
+def test_fail_closed_when_the_edge_proxy_is_down():
+    """No fallback path: with gov-gateway-edge stopped, nothing on the agents network can resolve or reach any
+    gateway address (the raw gateway is not on that network; the network is internal, so not the host port)."""
+    ips = sh("docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+             GATEWAY).stdout.split()
+    assert ips
+    code = ("import socket\nout = []\n"
+            "for h in ('gateway', 'gateway-core', 'gov-gateway', 'gov-gateway-edge', 'host.docker.internal'):\n"
+            "    try:\n        socket.gethostbyname(h); out.append('RESOLVED ' + h)\n"
+            "    except OSError:\n        pass\n"
+            f"for ip in {ips!r}:\n"
+            "    try:\n        socket.create_connection((ip, 4000), timeout=3); out.append('CONNECTED ' + ip)\n"
+            "    except OSError:\n        pass\n"
+            "print('LEAKS', out)\n")
+    sh("docker", "stop", EDGE)
+    try:
+        r = probe(code)
+    finally:
+        sh("docker", "start", EDGE)
+        for _ in range(60):
+            if sh("docker", "inspect", "-f", "{{.State.Health.Status}}", EDGE, check=False).stdout.strip() == "healthy":
+                break
+            time.sleep(1)
+    assert "LEAKS []" in r.stdout, r.stdout + r.stderr
+    assert sh("docker", "inspect", "-f", "{{.State.Health.Status}}", EDGE).stdout.strip() == "healthy"
 
 
 def test_edge_forwards_inference_routes(agent_key):

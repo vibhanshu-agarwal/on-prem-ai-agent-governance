@@ -125,6 +125,23 @@ def test_discovery_rate_limit_and_zero_budget(app):
     assert app.ports.gateway.keys == {}
 
 
+def test_discovery_feed_counter_reset_is_a_human_admin_action_and_audited(app):
+    for i in range(2):
+        app.discovery.submit("tiny", DiscoveryObservation(fingerprint=f"r{i}", evidence={"x": 1}))
+    assert {u["feed"]: u["count"] for u in app.discovery.feed_usage()}["tiny"] == 2
+    feed_client = Principal("tiny", ["feed", "admin"], kind="client")      # a machine client cannot lift its own cap
+    for who in (feed_client, BOB):
+        with pytest.raises(Forbidden):
+            app.discovery.reset_feed_count("tiny", who, "demo")
+    with pytest.raises(InvalidRequest):
+        app.discovery.reset_feed_count("tiny", OPS, " ")
+    res = app.discovery.reset_feed_count("tiny", OPS, "demo rerun")
+    assert res["previous_count"] == 2 and res["count"] == 0 and res["daily_limit"] == 2
+    rec = [r for r in app.ports.audit.records if r.action == "discovery.feed_count_reset"]
+    assert len(rec) == 1 and rec[0].actor == "alice" and rec[0].severity == "warning"
+    app.discovery.submit("tiny", DiscoveryObservation(fingerprint="r9", evidence={"x": 1}))   # budget available again
+
+
 def test_macaroon_properties():
     k = b"k" * 32
     t = macaroon.mint(k, "id1", ["agent = p", "budget_usd <= 5", "models in a,b", "max_depth <= 2"])
