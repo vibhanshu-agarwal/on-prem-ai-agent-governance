@@ -11,10 +11,10 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 | Week 0 defaults | done | see PILOT-PLAN.md table |
 | T1 foundation | done, review PASS (9438b3b) | LiteLLM pinned v1.100.3; see docs/results/T1.md |
 | T2 budget | in progress (Opus) | gap: no per-key max_tokens ceiling -> pre-call hook |
-| T3 control plane | in progress (Opus) | incl. OIDC stand-in + JWT->key auth layer |
+| T3 control plane | implemented (5b07686), in Fable review | 97 tests; stop 5-6 s, key refused ~0.1 s; see T3.md deviations (iptables RST, per-key block, sso network, port 4180) |
 | T4 agents | todo | |
 | T5 guardrails | todo | |
-| T6 observability/discovery | todo | |
+| T6 observability/discovery | in progress (Sonnet) | |
 | T7 policy | done, review PASS (d105228), 58 tests | 52 tests; admission not yet wired to container start (T3/T8) |
 | T8 acceptance | todo | |
 | T9 hardening/release | todo | |
