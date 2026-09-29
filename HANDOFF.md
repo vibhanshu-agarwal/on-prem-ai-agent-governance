@@ -15,7 +15,7 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 | T4 agents | todo | |
 | T5 guardrails | todo | |
 | T6 observability/discovery | todo | |
-| T7 policy | implemented (e52b494), in Opus review | 52 tests; admission not yet wired to container start (T3/T8) |
+| T7 policy | done, review PASS (d105228), 58 tests | 52 tests; admission not yet wired to container start (T3/T8) |
 | T8 acceptance | todo | |
 | T9 hardening/release | todo | |
 | T10 showcase packaging | todo | README, demo script |
