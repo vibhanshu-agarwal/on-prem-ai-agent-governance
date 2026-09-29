@@ -1,0 +1,45 @@
+# Recruiter-facing agent status page (T10a). Own compose project; only joins the existing cpinternal network
+# to reach the control-plane API and the IdP token endpoint. No DB, no Docker socket, no other access.
+#   scripts/status-page-up.sh
+# Browser: http://127.0.0.1:8400   (host port chosen because 8400 was free; change STATUS_PAGE_PORT to move it)
+name: govpilot-status-page
+
+services:
+  status-page:
+    image: govpilot/status-page:1
+    build: ../services/status-page
+    container_name: gov-status-page
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${STATUS_PAGE_PORT:-8400}:8400"
+    environment:
+      CP_URL: http://control-plane:8100
+      IDP_TOKEN_URL: http://idp:8300/token
+      GRAFANA_URL: ${GRAFANA_PUBLIC_URL:-http://127.0.0.1:3400}
+      OPENLIT_URL: ${OPENLIT_PUBLIC_URL:-http://127.0.0.1:3300}
+      API_DOCS_URL: ${CP_PUBLIC_URL:-http://127.0.0.1:8100}/docs
+      STATUS_PERSONAS: alice,bob,carol,dave,erin
+      IDP_PASSWORD_ALICE: ${IDP_PASSWORD_ALICE:?run scripts/control-plane-up.sh}
+      IDP_PASSWORD_BOB: ${IDP_PASSWORD_BOB:?}
+      IDP_PASSWORD_CAROL: ${IDP_PASSWORD_CAROL:?}
+      IDP_PASSWORD_DAVE: ${IDP_PASSWORD_DAVE:?}
+      IDP_PASSWORD_ERIN: ${IDP_PASSWORD_ERIN:?}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      cpinternal: {}
+      control: {}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u;u.urlopen('http://127.0.0.1:8400/api/health',timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  cpinternal:
+    name: govpilot_cpinternal
+    external: true
+  control:
+    name: govpilot_control
+    external: true

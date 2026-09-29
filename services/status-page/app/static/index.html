@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Control Room</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b82f6'/%3E%3Cpath d='M16 6l9 4v6c0 5-4 8-9 10-5-2-9-5-9-10v-6z' fill='none' stroke='white' stroke-width='2.4' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M16 6l9 4v6c0 5-4 8-9 10-5-2-9-5-9-10v-6z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/></svg>
+    <div><h1>Agent Control Room</h1><p>Governed AI agents, on-prem</p></div>
+  </div>
+  <div class="top-right">
+    <span id="health" class="pill" title="Control plane API"><i class="dot"></i><span>connecting</span></span>
+    <a id="grafana" class="btn ghost" target="_blank" rel="noopener">Cost dashboard &#8599;</a>
+    <label class="persona" title="The page acts as this person against the control-plane API. Roles come from the IdP.">
+      <span>Acting as</span>
+      <select id="persona"></select>
+    </label>
+    <button id="theme" class="btn icon" aria-label="Toggle theme" title="Toggle light/dark">&#9680;</button>
+  </div>
+</header>
+
+<main>
+  <section class="kpis" id="kpis"></section>
+
+  <div class="layout">
+    <section class="col-main">
+      <div class="section-head">
+        <h2>Agents</h2>
+        <div class="tools">
+          <div class="chips" id="statusChips" role="group" aria-label="Filter by status"></div>
+          <input id="search" type="search" placeholder="Search agent, team, owner" aria-label="Search">
+          <label class="check"><input id="showAll" type="checkbox"> include delegates</label>
+          <button id="bulkBtn" class="btn danger-outline">Bulk quarantine</button>
+        </div>
+      </div>
+      <div id="grid" class="grid"></div>
+      <div class="more"><button id="moreBtn" class="btn ghost" hidden>Show more</button><span id="count" class="muted"></span></div>
+    </section>
+
+    <aside class="col-side">
+      <section class="panel" id="qPanel">
+        <div class="section-head"><h2>Quarantine actions</h2></div>
+        <div id="qList" class="stack"></div>
+      </section>
+      <section class="panel">
+        <div class="section-head"><h2>Discovery queue</h2><span id="discBadge" class="badge"></span></div>
+        <p class="hint">Unregistered agents seen by discovery feeds. They hold zero budget and no key until an owner approves.</p>
+        <div id="discList" class="stack"></div>
+      </section>
+      <section class="panel">
+        <div class="section-head"><h2>Live audit log</h2><span class="live"><i class="dot on"></i> live</span></div>
+        <div id="audit" class="feed"></div>
+        <p class="hint"><span id="chain">Hash-chained, append-only.</span> <a href="#" id="verify">Verify chain</a></p>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<footer>Reads and writes only through the control-plane HTTP API. Tokens stay on the server. <a id="docs" target="_blank" rel="noopener">API docs</a> &middot; <a id="openlit" target="_blank" rel="noopener">OpenLIT traces</a></footer>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"></form></dialog>
+<div id="toasts" aria-live="polite"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
