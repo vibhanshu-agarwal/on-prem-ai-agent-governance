@@ -77,10 +77,13 @@ litellm_settings:
   # Extra hardening / callbacks are added by later tasks (T4 attribution, T5 guardrails).
   # T2 budget guard (deploy/litellm/callbacks/budget_guard.py): enforces the agent
   # max_tokens ceiling/default and makes worst-case cost fit the native reservation.
+  # Client credential guard (deploy/litellm/callbacks/client_credentials_guard.py): a request carrying provider
+  # credentials / endpoints / provider-bound headers (api_key, extra_headers, ...) is refused with 400 before any
+  # provider is called (native LiteLLM refuses only api_base/base_url; api_key and extra_headers went through).
   # T4 run attribution (deploy/litellm/callbacks/run_attribution.py): stamps run/parent run/agent/team
   # into the spend logs; rejects requests without a run id for keys whose metadata says
   # attribution.mode=enforce (default mode: audit).
-  callbacks: ["callbacks.budget_guard.budget_guard", "callbacks.run_attribution.run_attribution", "callbacks.guardrails_hook.guardrails_hook", "otel"]
+  callbacks: ["callbacks.client_credentials_guard.client_credentials_guard", "callbacks.budget_guard.budget_guard", "callbacks.run_attribution.run_attribution", "callbacks.guardrails_hook.guardrails_hook", "otel"]
   # T6/T8: "otel" exports one span per call (cost, tokens, key metadata, run id) to OpenLIT
   # (OTEL_* env in deploy/docker-compose.yml, network govpilot_obs). The export is asynchronous:
   # an OpenLIT/ClickHouse outage does not block or bypass enforcement (tests/acceptance).
