@@ -38,5 +38,15 @@ Low/medium: `impl-sonnet` (Sonnet 5.5 xhigh) -> `review-opus`. High: `impl-opus`
 
 Order: T1 -> (T2, T3) -> (T4, T5, T6, T7) -> T8 -> T9. Midpoint gate after T2+T3+T4: budget + correlation must work, else replan.
 
+## Context update (2026-09-29, from the user)
+No sponsoring company: this is a **portfolio showcase**. Where company-specific knowledge (network, auth structure) would be needed, make a sensible choice and build a simplified but working version rather than skipping it. Consequences:
+- Identity: add a small self-hosted OIDC issuer (simulated corporate IdP) plus the **custom auth layer** that validates JWTs and maps each caller to its per-agent LiteLLM key (the OSS route from report §2), so the "authenticated-agent stop" test is demonstrable. Folded into T3.
+- Kubernetes-only items (NetworkPolicy + conntrack, admission control, microVM tiers) get Docker equivalents (network disconnect + connection kill, deploy-time admission check, tier labels) and are clearly labelled as simplified.
+- Audience is recruiters: favour a polished, visual demo (clean agent-status page with live spend and a big stop button, Grafana cost view, recorded demo GIF) and a README that leads with the problem, architecture, and proof results.
+- **Loose coupling (design rule for every task):** a future sponsor should be able to adopt this repo by swapping adapters and config, not rewriting. The control plane talks to the outside world only through small interfaces (ports) with one adapter each for now:
+  `IdentityProvider` (local OIDC -> corporate OIDC/LDAP), `Orchestrator` (Docker -> Kubernetes), `NetworkQuarantine` (docker network disconnect -> NetworkPolicy/Cilium), `GatewayAdmin` (LiteLLM API), `SecretStore` (env/file -> Vault), `DiscoveryFeed` (docker events -> k8s watch/OpenLIT Controller), `CredentialRevoker` (tool/MCP/DB creds), `AuditSink` (Postgres append-only -> SIEM).
+  Adapter choice comes from config (env/YAML), never hard-coded; environment-specific values (hosts, teams, budgets, providers) live in config files, not code. Each adapter has a contract test so a new one can be validated the same way.
+- T10 (new, Low): showcase packaging: top-level README with architecture diagram, one-command demo script walking through the 12 acceptance tests, results summary.
+
 ## Out of scope for local pilot
 Real remote provider spend, SSO/JWT, Kubernetes NetworkPolicy/conntrack, microVM tiers (tier rule enforced at admission only), HA/DR, cloud billing.

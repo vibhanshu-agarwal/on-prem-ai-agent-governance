@@ -9,7 +9,7 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 | Task | State | Notes |
 |---|---|---|
 | Week 0 defaults | done | see PILOT-PLAN.md table |
-| T1 foundation | in progress | |
+| T1 foundation | implemented (f4a15a1), in review | LiteLLM pinned v1.100.3; see docs/results/T1.md |
 | T2 budget | todo | |
 | T3 control plane | todo | |
 | T4 agents | todo | |
@@ -18,6 +18,8 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 | T7 policy | todo | |
 | T8 acceptance | todo | |
 | T9 hardening/release | todo | |
+| T10 showcase packaging | todo | README, demo script |
 
 ## Log
 - 2026-09-29: repo initialised, sources extracted, plan and agent defs written.
+- 2026-09-29: user context: portfolio showcase, no sponsor; build simplified versions where company knowledge needed (see PILOT-PLAN context update).
