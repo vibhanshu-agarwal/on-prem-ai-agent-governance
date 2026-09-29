@@ -28,8 +28,10 @@ x-agent: &agent
   mem_limit: 256m
   volumes:
     - ./agents/config:/etc/agents:ro
+    - agent-journal:/var/lib/agent-journal          # durable run journal: outlives container re-creation
   environment: &agent-env
     AGENT_RATES_FILE: /etc/agents/rates.json
+    AGENT_JOURNAL_DIR: /var/lib/agent-journal
     AGENT_INTERVAL_S: ${AGENT_INTERVAL_S:-10}
     AGENT_MAX_ITERATIONS: ${AGENT_MAX_ITERATIONS:-}
 
@@ -121,6 +123,12 @@ services:
     networks:
       agents_sso: {aliases: [delegation-broker]}
       cpinternal: {}
+
+volumes:
+  # One JSONL file per agent (run.start / run.end with the terminal state of every run). Read by acceptance test
+  # M-01 to account for parent runs that never made a gateway call of their own (aborted by a fail-closed refusal).
+  agent-journal:
+    name: govpilot_agent_journal
 
 networks:
   agents:

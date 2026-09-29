@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from .auth import MacaroonAuth
 from .context import RunContext
-from .events import EventSink
+from .events import EventSink, error_fields
 from .gateway import GatewayClient, RetryPolicy
 from .transport import Transport, TransportError, UrllibTransport
 
@@ -106,7 +106,7 @@ class Delegator:
         try:
             out = fn(child_run, gw)
         except Exception as e:
-            self.sink.emit({"event": "run.end", **base, "status": "error", "error": f"{type(e).__name__}: {e}"[:200],
+            self.sink.emit({"event": "run.end", **base, "status": "error", **error_fields(e),
                             "duration_ms": round((time.time() - t0) * 1000, 1)})
             if getattr(e, "stopped", False):
                 self.forget(worker)

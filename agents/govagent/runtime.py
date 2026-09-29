@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .context import RunContext
-from .events import EventSink
+from .events import EventSink, error_fields
 from .gateway import GatewayError
 
 HEARTBEAT = os.environ.get("AGENT_HEARTBEAT_FILE", "/tmp/agent.heartbeat")
@@ -127,12 +127,13 @@ class AgentRuntime:
         self.sink.emit({"event": "run.start", "agent_id": self.agent_id, "run_id": run.run_id,
                         "root_run_id": run.root_run_id, "parent_run_id": None, "run_kind": "task", "name": run.name})
         t0 = time.time()
-        status, err = "ok", None
+        status, err, gw_err = "ok", None, None
         try:
             work(run)
             self._budget_strikes = 0
         except GatewayError as e:
             status, err = "error", f"{e.status} {e.etype}: {e.message}"[:200]
+            gw_err = error_fields(e).get("gateway_error")
             if e.budget_exceeded:
                 self._budget_strikes += 1
             if e.stopped:
@@ -141,9 +142,15 @@ class AgentRuntime:
             status, err = "error", f"{type(e).__name__}: {e}"[:200]
         if status != "ok":
             self.failures += 1
-        self.sink.emit({"event": "run.end", "agent_id": self.agent_id, "run_id": run.run_id,
-                        "root_run_id": run.root_run_id, "parent_run_id": None, "run_kind": "task", "status": status,
-                        "error": err, "duration_ms": round((time.time() - t0) * 1000, 1)})
+        # The terminal state of the run, always written: a run that was refused or aborted before it made an LLM
+        # call of its own (e.g. its first tool call got a fail-closed 503) has NO gateway row, so this record
+        # (durable in the journal, see events.JournalSink) is what closes its children's parent link.
+        end = {"event": "run.end", "agent_id": self.agent_id, "run_id": run.run_id,
+               "root_run_id": run.root_run_id, "parent_run_id": None, "run_kind": "task", "status": status,
+               "error": err, "duration_ms": round((time.time() - t0) * 1000, 1)}
+        if gw_err:
+            end["gateway_error"] = gw_err
+        self.sink.emit(end)
 
     def run(self, work: Callable[[RunContext], None]) -> int:
         self.sink.emit({"event": "agent.start", "agent_id": self.agent_id, "pid": os.getpid()})

@@ -20,6 +20,9 @@ trusted agent/team (from the virtual key) and the run fields the agent sent. A r
 the SAME run_id, the same step and attempt = n; failed attempts (provider errors, budget refusals, guardrail blocks)
 are rows too, with status=failure and their error text. A request refused for lacking a run id is a
 row with no run_id: it cost nothing and is reported as `rejected`, not as a hole.
+
+A child row can name a parent run that has no row of its own (a task aborted before its own first LLM call). The
+gateway cannot explain that; the agents' run journal can: `python scripts/run_journal.py --since 30m`.
 """
 from __future__ import annotations
 

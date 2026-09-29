@@ -12,12 +12,12 @@ Standard library only, so an agent image needs nothing but Python.
 from .auth import AuthError, AuthProvider, MacaroonAuth, OIDCClientCredentialsAuth, StaticKeyAuth
 from .context import RunContext, new_run_id
 from .delegation import Delegated, DelegationDenied, Delegator
-from .events import EventSink, MemorySink, StdoutSink
+from .events import EventSink, JournalSink, MemorySink, StdoutSink, TeeSink, default_sink
 from .gateway import ChatResult, GatewayClient, GatewayError, RetryPolicy
 from .tools import ToolBox, ToolNotAllowed
 from .transport import HttpResponse, Transport, TransportError, UrllibTransport
 
 __all__ = ["AuthError", "AuthProvider", "MacaroonAuth", "OIDCClientCredentialsAuth", "StaticKeyAuth",
            "RunContext", "new_run_id", "Delegated", "DelegationDenied", "Delegator", "EventSink", "MemorySink",
-           "StdoutSink", "ChatResult", "GatewayClient", "GatewayError", "RetryPolicy", "ToolBox",
+           "JournalSink", "TeeSink", "default_sink", "StdoutSink", "ChatResult", "GatewayClient", "GatewayError", "RetryPolicy", "ToolBox",
            "ToolNotAllowed", "HttpResponse", "Transport", "TransportError", "UrllibTransport"]

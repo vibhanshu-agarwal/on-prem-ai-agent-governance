@@ -4,7 +4,9 @@ WORKDIR /app
 # No third-party dependencies: govagent is standard library only.
 COPY govagent ./govagent
 COPY samples ./samples
-RUN useradd -r -u 10002 agent
+# /var/lib/agent-journal: the durable run journal (govagent.events.JournalSink). Compose mounts a named volume
+# here; a new named volume copies this directory's owner, so the non-root agent can write to it.
+RUN useradd -r -u 10002 agent && mkdir -p /var/lib/agent-journal && chown agent /var/lib/agent-journal
 USER agent
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 CMD ["python", "-m", "govagent.runtime"]
 CMD ["python", "-m", "samples.hr_agent"]

@@ -13,9 +13,9 @@ from __future__ import annotations
 import os
 from typing import Mapping
 
-from govagent import (GatewayClient, MacaroonAuth, OIDCClientCredentialsAuth, RetryPolicy, StaticKeyAuth, StdoutSink,
+from govagent import (GatewayClient, MacaroonAuth, OIDCClientCredentialsAuth, RetryPolicy, StaticKeyAuth,
                       ToolBox, Transport)
-from govagent.events import EventSink
+from govagent.events import EventSink, default_sink
 from govagent.runtime import AgentRuntime
 
 
@@ -47,7 +47,7 @@ class SampleAgent:
                  transport: Transport | None = None, runtime: AgentRuntime | None = None) -> None:
         self.env = dict(env if env is not None else os.environ)
         self.agent_id = self.env.get("AGENT_ID", self.agent_id)
-        self.sink = sink or StdoutSink()
+        self.sink = sink or default_sink(self.env, self.agent_id)     # stdout + the durable run journal when configured
         self.transport = transport
         self.small = self.env.get("MODEL_SMALL", "mock-local")
         self.large = self.env.get("MODEL_LARGE", "mock-remote")
