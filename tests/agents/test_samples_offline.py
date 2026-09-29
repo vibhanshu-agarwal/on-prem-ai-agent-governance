@@ -151,3 +151,20 @@ def test_each_iteration_is_a_new_root_run():
     assert a.run_id != b.run_id
     roots = {r["headers"]["x-govpilot-root-run-id"] for r in fake.llm_requests()}
     assert roots == {a.run_id, b.run_id}
+
+
+def test_registered_image_binding_matches_the_compose_image_for_every_agent():
+    """T6 discovery folds a workload into a registered agent only if it runs the image the register binds to."""
+    import yaml
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    prov = json.loads((root / "deploy" / "agents.json").read_text())["agents"]
+    compose = yaml.safe_load((root / "deploy" / "compose.agents.yml").read_text())["services"]
+    by_id = {s["labels"]["govpilot.agent_id"]: s for s in compose.values() if "govpilot.agent_id" in s.get("labels", {})}
+    assert set(by_id) == set(prov)
+    for aid, cfg in prov.items():
+        assert cfg["image"] == by_id[aid]["image"], aid
+        assert by_id[aid]["labels"]["govpilot.team"] == cfg["team"]
+        assert by_id[aid]["labels"]["govpilot.sandbox_tier"] == cfg["sandbox_tier"]
+        assert sorted(by_id[aid]["labels"]["govpilot.capabilities"].split(",")) == sorted(cfg["capabilities"])
+        assert by_id[aid]["labels"]["govpilot.auth"] == cfg["auth"]

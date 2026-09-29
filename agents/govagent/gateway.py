@@ -97,6 +97,7 @@ class GatewayClient:
         if run.user:
             body["user"] = run.user            # LiteLLM end-user attribution (spend-log `end_user`)
         payload = json.dumps(body).encode()
+        run = run.next_step()                   # one logical call = one step; its retries reuse it
         attempts = 0
         refreshed = False
         last: GatewayError | None = None
@@ -161,7 +162,7 @@ class GatewayClient:
              cost: float | None = None, tokens: tuple[int, int] | None = None) -> None:
         self.sink.emit({"event": "llm.attempt", "agent_id": ctx.agent_id, "run_id": ctx.run_id,
                         "parent_run_id": ctx.parent_run_id, "root_run_id": ctx.root_run_id, "run_kind": ctx.kind,
-                        "tool": ctx.tool, "attempt": attempt, "model": model, "http_status": status,
+                        "tool": ctx.tool, "step": ctx.step, "attempt": attempt, "model": model, "http_status": status,
                         "ok": status == 200, "latency_ms": round((time.time() - t0) * 1000, 1), "error": error,
                         "cost_usd": cost, "prompt_tokens": tokens[0] if tokens else None,
                         "completion_tokens": tokens[1] if tokens else None})

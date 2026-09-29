@@ -53,7 +53,7 @@ class FinanceReconAgent(SampleAgent):
             delegator = Delegator(self.agent_id, need(self.env, "BROKER_URL"), need(self.env, "DELEGATION_TOKEN"),
                                   self.env.get("GATEWAY_URL", "http://sso-gateway:8080"), self.sink,
                                   budget_usd=float(self.env.get("FIN_CHILD_BUDGET_USD", "0.2")),
-                                  models=[self.small], ttl_s=float(self.env.get("FIN_CHILD_TTL_S", "3600")),
+                                  models=[m for m in self.env.get("FIN_CHILD_MODELS", self.small).split(",") if m], ttl_s=float(self.env.get("FIN_CHILD_TTL_S", "3600")),
                                   transport=self.transport)
         self.delegator = delegator
 

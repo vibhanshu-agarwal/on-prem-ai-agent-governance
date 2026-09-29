@@ -9,7 +9,8 @@ agents send it as request headers (see agents/govagent/context.py):
   x-govpilot-parent-run-id  the run that caused it            (tool call, delegation)
   x-govpilot-root-run-id    the top of the run tree
   x-govpilot-run-kind       task | tool | delegation
-  x-govpilot-attempt        1-based attempt number; retries KEEP the run id
+  x-govpilot-step           1-based number of the LLM call within the run (a run may make several)
+  x-govpilot-attempt        1-based attempt number of that call; retries KEEP the run id and the step
   x-govpilot-tool           tool name when kind == tool
   x-govpilot-user           the human/employee the work is done for (also the OpenAI `user` field)
 
@@ -19,8 +20,9 @@ This callback (a separate file from budget_guard, nothing shared but the hook AP
              (agent id and team come from the virtual key, never from the request) and the
              run fields into `metadata.spend_logs_metadata`, which LiteLLM persists in
              `LiteLLM_SpendLogs.metadata`. Also sets the spend-log session id to the run id.
-             Missing/invalid run id: `enforce` rejects with 400 `run_id_required`;
-             `audit` lets it through but stamps `attribution: missing_run_id` and emits an event.
+             Missing/invalid run id: `enforce` rejects with 400 `run_id_required` (400 `run_fields_invalid` when the
+             run id is fine but the tree fields are not); `audit` lets it through, stamps
+             `attribution: missing_run_id` and emits an event.
   headers    echoes x-govpilot-run-id / x-govpilot-attribution on the response.
   post-call  one `GOVPILOT_ATTRIBUTION {json}` line per attempt, success or failure, so failed
              attempts (which never reach the spend table) are still attributable.
@@ -49,6 +51,7 @@ log = logging.getLogger("govpilot.run_attribution")
 
 H_RUN, H_PARENT, H_ROOT = "x-govpilot-run-id", "x-govpilot-parent-run-id", "x-govpilot-root-run-id"
 H_KIND, H_ATTEMPT, H_TOOL, H_USER = "x-govpilot-run-kind", "x-govpilot-attempt", "x-govpilot-tool", "x-govpilot-user"
+H_STEP = "x-govpilot-step"
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{5,79}$")
 KINDS = {"task", "tool", "delegation"}
 MODES = ("enforce", "audit", "off")
@@ -57,7 +60,7 @@ LLM_CALL_TYPES = {"completion", "acompletion", "text_completion", "atext_complet
                   "embeddings", "aembedding", "anthropic_messages", "generate_content", "agenerate_content"}
 # keys the caller may never set through spend_logs_metadata: they are stamped from trusted sources
 RESERVED = {"agent_id", "team", "key_alias", "run_id", "parent_run_id", "root_run_id", "run_kind", "attempt",
-            "tool", "attribution", "root_agent_id", "parent_agent_id", "user"}
+            "tool", "attribution", "root_agent_id", "parent_agent_id", "user", "step"}
 
 
 class AttributionEventSink(Protocol):
@@ -77,9 +80,10 @@ SINKS = {"log": LogEventSink}
 
 class RunFields:
     # plain class: this module is loaded by LiteLLM without a sys.modules entry, which breaks @dataclass
-    __slots__ = ("run_id", "parent_run_id", "root_run_id", "kind", "attempt", "tool", "user", "problems")
+    __slots__ = ("run_id", "parent_run_id", "root_run_id", "kind", "attempt", "tool", "user", "problems", "step")
 
-    def __init__(self, run_id, parent_run_id, root_run_id, kind, attempt, tool, user, problems):
+    def __init__(self, run_id, parent_run_id, root_run_id, kind, attempt, tool, user, problems, step=1):
+        self.step = step
         self.run_id, self.parent_run_id, self.root_run_id = run_id, parent_run_id, root_run_id
         self.kind, self.attempt, self.tool, self.user, self.problems = kind, attempt, tool, user, problems
 
@@ -126,6 +130,12 @@ def parse_run_fields(data: dict) -> tuple[RunFields, dict]:
         attempt = int(pick(H_ATTEMPT, "attempt") or 1)
     except ValueError:
         attempt, problems = 1, problems + ["attempt is not an integer"]
+    try:
+        step = int(pick(H_STEP, "step") or 1)
+    except ValueError:
+        step, problems = 1, problems + ["step is not an integer"]
+    if not (1 <= step <= 100000):
+        step, problems = 1, problems + ["step must be 1..100000"]
     if run_id is None:
         problems.append("missing run id (send x-govpilot-run-id)")
     elif not RUN_ID_RE.match(run_id):
@@ -151,7 +161,7 @@ def parse_run_fields(data: dict) -> tuple[RunFields, dict]:
     if run_id and root is None:
         root = run_id if parent is None else None
     extra = {k: v for k, v in cm.items() if k not in RESERVED}
-    return RunFields(run_id, parent, root, kind, attempt, tool, user, problems), extra
+    return RunFields(run_id, parent, root, kind, attempt, tool, user, problems, step), extra
 
 
 def _key_identity(u: Any) -> dict:
@@ -211,15 +221,19 @@ class RunAttribution(CustomLogger):
                 raise _reject(400, "run_id_required",
                               "Every request must carry a valid run id (x-govpilot-run-id): " + "; ".join(rf.problems))
         elif rf.problems:
-            # run id is fine, something secondary is off: keep the request, record the problem
-            self._emit({"event": "attribution.warning", "ts": time.time(), "run_id": rf.run_id,
-                        "problems": rf.problems, **ident})
+            # run id is fine but the run fields are not (a tool run with no parent, a bad attempt/step): the tree
+            # would be wrong, so `enforce` refuses; `audit` keeps the request and records the problem
+            self._emit({"event": "attribution.rejected" if mode == "enforce" else "attribution.warning",
+                        "ts": time.time(), "mode": mode, "run_id": rf.run_id, "problems": rf.problems, **ident})
+            if mode == "enforce":
+                raise _reject(400, "run_fields_invalid", "Invalid run fields: " + "; ".join(rf.problems))
         md = data.setdefault("metadata", {})
         sl = dict(extra)
         sl.update({"agent_id": ident["agent_id"], "team": ident["team"], "key_alias": ident["key_alias"],
                    "root_agent_id": ident["root_agent_id"], "parent_agent_id": ident["parent_agent_id"],
                    "run_id": rf.run_id, "parent_run_id": rf.parent_run_id, "root_run_id": rf.root_run_id,
-                   "run_kind": rf.kind, "attempt": rf.attempt, "tool": rf.tool, "user": rf.user,
+                   "run_kind": rf.kind, "step": rf.step, "attempt": rf.attempt, "tool": rf.tool,
+                   "user": rf.user,
                    "attribution": "ok" if rf.run_id else "missing_run_id"})
         md["spend_logs_metadata"] = {k: v for k, v in sl.items() if v is not None}
         if rf.run_id:
@@ -240,7 +254,7 @@ class RunAttribution(CustomLogger):
         if not sl.get("run_id"):
             return None
         out = {"x-govpilot-run-id": str(sl["run_id"]), "x-govpilot-attribution": str(sl.get("attribution", "ok")),
-               "x-govpilot-attempt": str(sl.get("attempt", 1))}
+               "x-govpilot-step": str(sl.get("step", 1)), "x-govpilot-attempt": str(sl.get("attempt", 1))}
         if sl.get("agent_id"):
             out["x-govpilot-agent"] = str(sl["agent_id"])
         return out
@@ -259,7 +273,7 @@ class RunAttribution(CustomLogger):
             "event": kind, "ts": time.time(), "status": status,
             "litellm_call_id": kwargs.get("litellm_call_id"), "agent_id": sl.get("agent_id"), "team": sl.get("team"),
             "run_id": sl.get("run_id"), "parent_run_id": sl.get("parent_run_id"), "root_run_id": sl.get("root_run_id"),
-            "run_kind": sl.get("run_kind"), "attempt": sl.get("attempt"), "tool": sl.get("tool"),
+            "run_kind": sl.get("run_kind"), "step": sl.get("step"), "attempt": sl.get("attempt"), "tool": sl.get("tool"),
             "user": sl.get("user"), "model": md.get("model_group") or kwargs.get("model"),
             "provider": urlparse(str(api_base)).hostname or kwargs.get("custom_llm_provider"),
             "prompt_tokens": getattr(usage, "prompt_tokens", None),

@@ -66,6 +66,7 @@ def test_headers_carry_every_field_two_ways():
     assert h["x-govpilot-run-id"] == c.run_id and h["x-govpilot-parent-run-id"] == root.run_id
     assert h["x-govpilot-root-run-id"] == root.run_id and h["x-govpilot-run-kind"] == "tool"
     assert h["x-govpilot-attempt"] == "2" and h["x-govpilot-tool"] == "lookup" and h["x-govpilot-user"] == "E1004"
+    assert h["x-govpilot-step"] == "1"
     meta = json.loads(h["x-litellm-spend-logs-metadata"])          # LiteLLM's own carrier: works without our callback
     assert meta["run_id"] == c.run_id and meta["parent_run_id"] == root.run_id and meta["attempt"] == 2
     assert meta["run_kind"] == "tool" and meta["tool"] == "lookup" and meta["user"] == "E1004"
@@ -117,6 +118,8 @@ def test_callback_and_library_agree_on_the_run_id_grammar(callback):
     ({}, "missing run id"),
     ({"x-govpilot-run-id": "bad id"}, "must match"),
     ({"x-govpilot-run-id": "run-abcdef12", "x-govpilot-attempt": "zero"}, "attempt"),
+    ({"x-govpilot-run-id": "run-abcdef12", "x-govpilot-step": "x"}, "step"),
+    ({"x-govpilot-run-id": "run-abcdef12", "x-govpilot-step": "0"}, "step"),
     ({"x-govpilot-run-id": "run-abcdef12", "x-govpilot-run-kind": "tool"}, "needs a parent"),
     ({"x-govpilot-run-id": "run-abcdef12", "x-govpilot-parent-run-id": "run-abcdef12"}, "own parent"),
 ])
@@ -194,5 +197,19 @@ def test_response_headers_echo_run_and_agent(callback):
     c = RunContext.root("hr-agent").with_attempt(3)
     data = _pre(cb, _Key({"agent_id": "hr-agent"}), _req(c.headers(), {"model": "m"}))
     h = asyncio.run(cb.async_post_call_response_headers_hook(data, _Key(), None))
-    assert h == {"x-govpilot-run-id": c.run_id, "x-govpilot-attribution": "ok", "x-govpilot-attempt": "3",
-                 "x-govpilot-agent": "hr-agent"}
+    assert h == {"x-govpilot-run-id": c.run_id, "x-govpilot-attribution": "ok", "x-govpilot-step": "1",
+                 "x-govpilot-attempt": "3", "x-govpilot-agent": "hr-agent"}
+
+
+def test_enforce_also_rejects_a_malformed_run_tree_audit_only_warns(callback):
+    events: list[dict] = []
+    sink_ = type("S", (), {"emit": lambda s, e: events.append(e)})()
+    hdrs = {"x-govpilot-run-id": "run-abcdef12", "x-govpilot-run-kind": "tool"}       # a tool run with no parent
+    with pytest.raises(Exception) as ei:
+        _pre(callback.RunAttribution(sink=sink_), _Key({"agent_id": "a", "attribution": {"mode": "enforce"}}),
+             _req(hdrs, {"model": "m"}))
+    assert "run_fields_invalid" in repr(ei.value) or getattr(ei.value, "type", "") == "run_fields_invalid"
+    events.clear()
+    data = _pre(callback.RunAttribution(sink=sink_), _Key({"agent_id": "a", "attribution": {"mode": "audit"}}),
+                _req(hdrs, {"model": "m"}))
+    assert data["metadata"]["spend_logs_metadata"]["run_id"] == "run-abcdef12" and events[0]["event"] == "attribution.warning"

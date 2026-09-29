@@ -6,7 +6,9 @@ A *run* is one unit of work by one agent. Runs form a tree:
     |-- tool run (kind=tool)             a tool call, child of the run that called it
     |-- delegation run (kind=delegation) sub-task handed to a child agent; the child agent
                                          works under this run id, under its own credential
-  retries are NOT new runs: the same run id is sent again with attempt = 2, 3, ...
+  a run may make several LLM calls: each logical call gets the next `step` (1, 2, ...);
+  retries are NOT new runs and NOT new steps: the same run id and step are sent again with attempt = 2, 3, ...
+  so (run_id, step, attempt) names one gateway request
 
 Every field travels two ways so it survives whichever hop drops one of them:
   * HTTP headers x-govpilot-*  (read by deploy/litellm/callbacks/run_attribution.py)
@@ -20,7 +22,9 @@ import hashlib
 import json
 import re
 import uuid
-from dataclasses import dataclass, replace
+import itertools
+from dataclasses import dataclass, field, replace
+from typing import Iterator
 
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{5,79}$")   # keep identical to the gateway callback
 KINDS = ("task", "tool", "delegation")
@@ -41,6 +45,9 @@ class RunContext:
     tool: str | None = None
     user: str | None = None
     attempt: int = 1
+    step: int = 0            # which logical LLM call of this run (0 = not yet assigned)
+    # shared by every copy of this run (retries, user changes) so steps stay unique within the run
+    _steps: Iterator[int] = field(default_factory=lambda: itertools.count(1), compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not RUN_ID_RE.match(self.run_id):
@@ -60,6 +67,10 @@ class RunContext:
         return RunContext(agent_id=agent_id or self.agent_id, run_id=new_run_id(), root_run_id=self.root_run_id,
                           parent_run_id=self.run_id, kind=kind, name=name, tool=tool, user=self.user)
 
+    def next_step(self) -> "RunContext":
+        """The context for the next logical LLM call of this run (a retry of it keeps the step)."""
+        return replace(self, step=next(self._steps), attempt=1)
+
     def with_attempt(self, attempt: int) -> "RunContext":
         """Same run, next attempt: a retry keeps run_id/parent_run_id."""
         return replace(self, attempt=attempt)
@@ -73,6 +84,7 @@ class RunContext:
     def headers(self) -> dict[str, str]:
         h = {"x-govpilot-run-id": self.run_id, "x-govpilot-root-run-id": self.root_run_id,
              "x-govpilot-run-kind": self.kind, "x-govpilot-attempt": str(self.attempt),
+             "x-govpilot-step": str(max(self.step, 1)),
              "traceparent": self.traceparent()}
         if self.parent_run_id:
             h["x-govpilot-parent-run-id"] = self.parent_run_id
@@ -85,7 +97,7 @@ class RunContext:
 
     def spend_metadata(self) -> dict:
         md = {"run_id": self.run_id, "root_run_id": self.root_run_id, "run_kind": self.kind,
-              "attempt": self.attempt, "agent_run_name": self.name}
+              "attempt": self.attempt, "step": max(self.step, 1), "agent_run_name": self.name}
         if self.parent_run_id:
             md["parent_run_id"] = self.parent_run_id
         if self.tool:

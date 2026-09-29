@@ -43,7 +43,7 @@ def test_retry_carries_the_same_run_id_and_bumps_the_attempt(sink, first):
     assert res.attempts == 2 and len(t.requests) == 2 and len(sleeps) == 1
     h1, h2 = t.requests[0]["headers"], t.requests[1]["headers"]
     for k in ("x-govpilot-run-id", "x-govpilot-parent-run-id", "x-govpilot-root-run-id", "x-govpilot-run-kind",
-              "x-govpilot-tool"):
+              "x-govpilot-tool", "x-govpilot-step"):
         assert h1[k] == h2[k], k
     assert (h1["x-govpilot-attempt"], h2["x-govpilot-attempt"]) == ("1", "2")
     assert json.loads(h2["x-litellm-spend-logs-metadata"])["attempt"] == 2
@@ -147,3 +147,28 @@ def test_concurrent_runs_never_share_a_run_id(sink):
     [x.start() for x in ths]
     [x.join() for x in ths]
     assert sorted(r["headers"]["x-govpilot-run-id"] for r in t.requests) == sorted(r.run_id for r in runs)
+
+
+def test_a_run_with_several_calls_numbers_them_and_a_retry_keeps_its_step(sink):
+    gw, t, _ = client([chat_ok(), err(503), chat_ok(), chat_ok()], sink)
+    run = RunContext.root("a-agent")
+    for _ in range(3):
+        gw.chat(run, "m", MSGS)
+    key = [(r["headers"]["x-govpilot-run-id"] == run.run_id, r["headers"]["x-govpilot-step"], r["headers"]["x-govpilot-attempt"])
+           for r in t.requests]
+    assert key == [(True, "1", "1"), (True, "2", "1"), (True, "2", "2"), (True, "3", "1")]
+    assert json.loads(t.requests[2]["headers"]["x-litellm-spend-logs-metadata"])["step"] == 2
+    ev = sink.of("llm.attempt")
+    assert [(e["step"], e["attempt"]) for e in ev] == [(1, 1), (2, 1), (2, 2), (3, 1)]
+    assert len({(e["run_id"], e["step"], e["attempt"]) for e in ev}) == 4          # a request is uniquely named
+
+
+def test_steps_are_per_run_and_shared_across_copies_of_the_same_run(sink):
+    from dataclasses import replace
+    gw, t, _ = client([], sink)
+    root = RunContext.root("a-agent")
+    other = RunContext.root("a-agent")
+    gw.chat(root, "m", MSGS)
+    gw.chat(replace(root, user="E1"), "m", MSGS)          # a copy of the same run (HR sets the user this way)
+    gw.chat(other, "m", MSGS)
+    assert [r["headers"]["x-govpilot-step"] for r in t.requests] == ["1", "2", "1"]

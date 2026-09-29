@@ -17,7 +17,7 @@ so a sponsor with another gateway only has to produce the same normalised rows (
 Row meaning. LiteLLM writes one spend-log row per gateway request, success or failure. The gateway
 callback (deploy/litellm/callbacks/run_attribution.py) stamps `metadata.spend_logs_metadata` with the
 trusted agent/team (from the virtual key) and the run fields the agent sent. A retry is a new row with
-the SAME run_id and attempt = n; failed attempts (provider errors, budget refusals, guardrail blocks)
+the SAME run_id, the same step and attempt = n; failed attempts (provider errors, budget refusals, guardrail blocks)
 are rows too, with status=failure and their error text. A request refused for lacking a run id is a
 row with no run_id: it cost nothing and is reported as `rejected`, not as a hole.
 """
@@ -29,6 +29,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -67,8 +69,15 @@ def fetch_rows(gateway: str, master_key: str, start: datetime, end: datetime, pa
                                     "page": page, "page_size": page_size})
         req = urllib.request.Request(f"{gateway.rstrip('/')}/spend/logs/v2?{q}",
                                      headers={"Authorization": f"Bearer {master_key}"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            d = json.loads(r.read())
+        for attempt in range(4):                     # the gateway may be mid-restart: retry transient failures
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    d = json.loads(r.read())
+                break
+            except (urllib.error.URLError, ConnectionError, OSError):
+                if attempt == 3:
+                    raise
+                time.sleep(2 * (attempt + 1))
         rows += d.get("data", [])
         if page >= int(d.get("total_pages") or 1) or not d.get("data"):
             return rows
@@ -98,6 +107,7 @@ def normalise(row: dict) -> dict:
         "parent_run_id": sl.get("parent_run_id"),
         "root_run_id": sl.get("root_run_id"),
         "run_kind": sl.get("run_kind"),
+        "step": sl.get("step"),
         "attempt": sl.get("attempt"),
         "tool": sl.get("tool"),
         "provider": _host(row.get("api_base")) or row.get("custom_llm_provider"),
@@ -278,7 +288,7 @@ def main(argv=None) -> int:
             print()
     elif a.rows:
         print_table(rows, [("ts", "time"), ("agent", "agent"), ("run_id", "run"), ("parent_run_id", "parent"),
-                           ("run_kind", "kind"), ("tool", "tool"), ("attempt", "try"), ("user", "user"),
+                           ("run_kind", "kind"), ("tool", "tool"), ("step", "step"), ("attempt", "try"), ("user", "user"),
                            ("team", "team"), ("provider", "provider"), ("model", "model"),
                            ("prompt_tokens", "in"), ("completion_tokens", "out"), ("cost_usd", "cost"),
                            ("status", "status")])
