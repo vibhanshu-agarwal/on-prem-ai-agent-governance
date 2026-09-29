@@ -232,7 +232,15 @@ def test_control_plane_outage(drill, record):
               "route around it); service resumes after the gateway restarts",
     simplification="One gateway replica: its outage is a full stop of AI traffic (HA is out of pilot scope).")
 def test_gateway_outage(record):
-    code = ("import socket,sys\nfor h,p in (('gateway',4000),('mock-local',8000),('mock-remote',8000)):\n"
+    # T9: `gateway` on the agents network is the allowlist proxy, which stays up when LiteLLM is down: the TCP
+    # connect succeeds but no model traffic can pass, so the gateway probe is an inference request that must fail.
+    code = ("import socket,sys,urllib.request as u,urllib.error as e\n"
+            "try:\n"
+            "  u.urlopen(u.Request('http://gateway:4000/v1/chat/completions',data=b'{}',headers={'Content-Type':'application/json'}),timeout=8)\n"
+            "  print('gateway CONNECTED')\n"
+            "except e.HTTPError as x: print('gateway','BLOCKED','HTTP',x.code) if x.code>=500 else print('gateway CONNECTED',x.code)\n"
+            "except Exception as x: print('gateway','BLOCKED',type(x).__name__)\n"
+            "for h,p in (('mock-local',8000),('mock-remote',8000)):\n"
             "  try: socket.create_connection((h,p),timeout=4).close(); print(h,'CONNECTED')\n"
             "  except Exception as e: print(h,'BLOCKED',type(e).__name__)\n")
     _stop("gov-gateway")

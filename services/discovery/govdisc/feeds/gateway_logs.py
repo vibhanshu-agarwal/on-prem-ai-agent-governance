@@ -18,7 +18,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
-from ..evidence import Hints, container_evidence, first_label, iso_now
+from ..evidence import Hints, container_evidence, first_label, iso_now, matches_any
 from ..model import CallSummary, Observation, RefusedCall
 from ..ports import AccessLogSource, CallRecordSource, ContainerSource, DiscoveryFeed
 from .docker_events import container_fingerprint
@@ -33,6 +33,14 @@ class GatewayFeedConfig:
     hints: Hints = field(default_factory=Hints)
     ignore_agent_id_prefixes: list[str] = field(default_factory=list)
     telemetry_slack_s: float = 120.0     # spans reach ClickHouse a few seconds after the call: re-read a little history
+    # The platform's own containers and throwaway test containers (same `platform:` block the docker-events feed
+    # uses) are not shadow AI: a refused probe from one must not spend the feed's daily proposal budget (T9: the
+    # hardening checks probe the edge from throwaway containers).
+    # Names and label KEYS only, not the compose-project label values the docker-events feed also honours: images
+    # built by compose (govpilot/mock-provider, the stand-in "shadow" workload of the S8-05 / T6 tests) carry the
+    # project label baked into the image, so a value match would hide exactly the caller this feed exists for.
+    ignore_names: list[str] = field(default_factory=list)
+    ignore_labels: list[str] = field(default_factory=list)
 
 
 class GatewayLogsFeed(DiscoveryFeed):
@@ -73,6 +81,9 @@ class GatewayLogsFeed(DiscoveryFeed):
             log.warning("cannot check %s against governed ranges: %s", ip, e)
             return False
 
+    def _is_platform(self, c) -> bool:
+        return matches_any(c.name, self.cfg.ignore_names) or any(k in c.labels for k in self.cfg.ignore_labels)
+
     def _refused(self, refused: list[RefusedCall], now: float) -> list[Observation]:
         by_ip: dict[str, list[RefusedCall]] = defaultdict(list)
         for r in refused:
@@ -86,6 +97,8 @@ class GatewayLogsFeed(DiscoveryFeed):
                 continue                                      # not on a governed network: not our caller
             if c is None and not self._in_governed_range(ip):
                 continue                                      # e.g. the host reaching the published port
+            if c is not None and self._is_platform(c):
+                continue
             fp = container_fingerprint(c) if c else f"caller:{ip}"
             if fp in self.seen:
                 continue

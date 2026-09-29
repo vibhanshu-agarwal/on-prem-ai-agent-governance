@@ -73,7 +73,8 @@ def build_feed(name: str, fc: dict, cfg: dict, containers: ContainerSource, seen
                 raise ValueError(f"unknown call_records type {cr['type']!r}")
         return GatewayLogsFeed(GatewayFeedConfig(governed, fc.get("min_refused_calls", 1), hints,
                                                  fc.get("ignore_agent_id_prefixes", []),
-                                                 float(fc.get("telemetry_slack_s", 120))),
+                                                 float(fc.get("telemetry_slack_s", 120)),
+                                                 plat.get("ignore_names", []), plat.get("ignore_labels", [])),
                                containers, access, calls, name=name, seen=seen)
     if t == "openlit_controller":
         from .adapters.controller_http import ControllerHttpSource

@@ -48,7 +48,8 @@ feeds:
     ignore_agent_id_prefixes: []
     access_log:
       type: docker_logs
-      containers: [gov-gateway]
+      containers: [gov-gateway-edge]   # T9: agents reach the gateway through the edge proxy; only its log has the agent's IP
+                                       # (the raw gateway now sees the proxy, the control plane and the operator port)
     call_records:
       type: clickhouse
       url: http://gov-obs-clickhouse:8123

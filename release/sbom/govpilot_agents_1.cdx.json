@@ -50788,7 +50788,7 @@
  ],
  "metadata": {
   "component": {
-   "bom-ref": "958e4355a30906d2",
+   "bom-ref": "38d3f5e37844dfcf",
    "name": "govpilot/agents",
    "type": "container",
    "version": "1"
@@ -50800,7 +50800,7 @@
    },
    {
     "name": "syft:image:labels:com.docker.compose.service",
-    "value": "finance-recon-agent"
+    "value": "hr-agent"
    },
    {
     "name": "syft:image:labels:com.docker.compose.version",

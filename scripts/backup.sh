@@ -16,9 +16,9 @@ TS=$(date -u +%Y%m%dT%H%M%SZ)
 OUT="${1:-.local/backups/$TS}"
 mkdir -p "$OUT"
 dump() {  # container user db file
-  docker exec "$1" sh -c "pg_dump -U $2 -d $3 -Fc -f /tmp/backup.dump"
-  docker cp "$1:/tmp/backup.dump" "$OUT/$4" >/dev/null
-  docker exec "$1" rm -f /tmp/backup.dump
+  # streamed through stdout: the hardened Postgres has a tmpfs /tmp, which `docker cp` cannot read
+  docker exec "$1" pg_dump -U "$2" -d "$3" -Fc > "$OUT/$4"
+  [[ -s "$OUT/$4" ]] || { echo "empty dump for $3"; exit 1; }
 }
 echo ">> LiteLLM Postgres";       dump gov-postgres litellm litellm litellm.dump
 echo ">> control-plane Postgres"; dump gov-cp-postgres cp_super controlplane controlplane.dump

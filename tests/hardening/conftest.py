@@ -29,7 +29,9 @@ def running(name: str) -> bool:
 
 def probe(code: str, network: str = "govpilot_agents", timeout=90) -> subprocess.CompletedProcess:
     """Run python inside a throwaway container attached only to `network` (an agent's point of view)."""
-    return sh("docker", "run", "--rm", "--network", network, "--entrypoint", "python", PROBE_IMAGE, "-c", code,
+    # govpilot.t8test: on the discovery ignore list, so these refused probes are not proposed as shadow AI
+    return sh("docker", "run", "--rm", "--label", "govpilot.t8test=1", "--network", network, "--entrypoint", "python",
+              PROBE_IMAGE, "-c", code,
               check=False, timeout=timeout)
 
 

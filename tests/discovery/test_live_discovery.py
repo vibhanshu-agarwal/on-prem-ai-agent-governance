@@ -110,7 +110,7 @@ def test_unregistered_container_making_an_ai_call_is_proposed_and_refused(alice,
     out = c.logs().decode()
     assert "STATUS-NOKEY (401," in out and "STATUS-FAKEKEY (401," in out, out
     ip = docker.from_env().containers.get(name).attrs["NetworkSettings"]["Networks"]["govpilot_agents"]["IPAddress"]
-    gw = docker.from_env().containers.get("gov-gateway").logs(since=int(time.time()) - 120).decode()
+    gw = docker.from_env().containers.get("gov-gateway-edge").logs(since=int(time.time()) - 120).decode()
     assert f"{ip}:" in gw and any(f'{ip}:' in l and '" 401 ' in l for l in gw.splitlines())
     # no gateway key exists that it could use, and it is not in the register
     assert cpclient.gw_admin().get("/key/list", params={"key_alias": name}).json().get("keys") == []

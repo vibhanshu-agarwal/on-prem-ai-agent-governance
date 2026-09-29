@@ -247,11 +247,12 @@ B=.local/backups/<UTC>; ( cd $B && sha256sum -c MANIFEST.sha256 )
 # 1. quiesce: nothing may hold connections
 docker stop gov-gateway-edge gov-authproxy gov-control-plane gov-estop gov-idp gov-gateway gov-discovery
 # 2. LiteLLM database
-docker cp $B/litellm.dump gov-postgres:/tmp/litellm.dump
-docker exec gov-postgres sh -c 'dropdb -U litellm --if-exists litellm && createdb -U litellm litellm && pg_restore -U litellm -d litellm --no-owner /tmp/litellm.dump'
+# (streamed through stdin: the hardened Postgres containers have a tmpfs /tmp that `docker cp` cannot write to)
+docker exec gov-postgres sh -c 'dropdb -U litellm --if-exists litellm && createdb -U litellm litellm'
+docker exec -i gov-postgres pg_restore -U litellm -d litellm --no-owner < $B/litellm.dump
 # 3. control-plane database (roles cp_owner / cp_app already exist from db-init; keep ownership)
-docker cp $B/controlplane.dump gov-cp-postgres:/tmp/cp.dump
-docker exec gov-cp-postgres sh -c 'dropdb -U cp_super --if-exists controlplane && createdb -U cp_super controlplane && pg_restore -U cp_super -d controlplane /tmp/cp.dump'
+docker exec gov-cp-postgres sh -c 'dropdb -U cp_super --if-exists controlplane && createdb -U cp_super controlplane'
+docker exec -i gov-cp-postgres pg_restore -U cp_super -d controlplane < $B/controlplane.dump
 # 4. Redis: DO NOT restore the snapshot over a newer append-only file. Spend counters are re-seeded from Postgres
 #    (key spend columns) on first use; the budget guard reserves against the Postgres value, so the safe direction is
 #    "counters too low for a moment, never too high". Only if you must: stop gov-redis, empty the volume, copy redis.rdb

@@ -105,6 +105,20 @@ def test_refused_call_from_an_ip_outside_the_governed_ranges_is_ignored():
     assert list(feed.observations()) == []
 
 
+def test_refused_calls_from_platform_and_throwaway_test_containers_are_not_shadow_ai():
+    """T9: probes from `gov-*` containers and from containers carrying an ignore label must not spend the feed's
+    daily proposal budget (the hardening checks probe the edge from throwaway containers)."""
+    from govdisc.feeds.gateway_logs import GatewayFeedConfig, GatewayLogsFeed
+    plat = container("gov-authproxy", nets={"govpilot_agents": "172.22.0.5"})
+    probe = container("probe-1", labels={"govpilot.t8test": "1"}, nets={"govpilot_agents": "172.22.0.6"})
+    rogue = container("rogue", labels={"owner": "mallory"}, nets={"govpilot_agents": "172.22.0.7"})
+    cfg = GatewayFeedConfig(GOVERNED, 1, Hints(), [], 120.0, ["^gov-"], ["govpilot.t8test"])
+    feed = GatewayLogsFeed(cfg, fakes.FakeContainers([plat, probe, rogue]),
+                           fakes.FakeAccess([fakes.refused(ip="172.22.0.5"), fakes.refused(ip="172.22.0.6"),
+                                             fakes.refused(ip="172.22.0.7")]), clock=lambda: 2000.0, lookback_s=1500)
+    assert [o.name for o in feed.observations()] == ["rogue"]
+
+
 def test_refused_call_from_outside_governed_networks_is_not_ours():
     outsider = container("elsewhere", nets={"bridge": "172.17.0.5"})
     feed = _gw(access=fakes.FakeAccess([fakes.refused(ip="172.17.0.5")]), containers=fakes.FakeContainers([outsider]))

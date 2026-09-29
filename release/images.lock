@@ -18,10 +18,10 @@ python:3.12-slim sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d46
 redis:7.4.8-alpine sha256:7aec734b2bb298a1d769fd8729f13b8514a41bf90fcdd1f38ec52267fbaa8ee6
 
 # Built from this repository (not pulled); the id changes with every rebuild. Base image is pinned above.
-# built govpilot/agents:1 sha256:e573f68b053544b4be28605298d0aaf8492104c4481466b83b8b52a4f083d78d
-# built govpilot/control-plane:1 sha256:4edfcf50e26dcac337163dfaf7a27ca60bbe74803a44e4f2d0d3efb3a9ec4cb4
-# built govpilot/discovery:1 sha256:3be1871ac1a6fbc4c89ba664d89fb452bc9b0e3c3da70630cd442fc4b73d8694
-# built govpilot/mock-provider:1 sha256:10f8c7488bd8484e1c2874e17496feb1731b7c48595f9eeef4b176370ce0d726
-# built govpilot/status-page:1 sha256:23e3a008599421400e7295319aff198ca1c3153ede2a89bf1db8ab4ccd0092ac
+# built govpilot/agents:1 sha256:714ead25f55f2c348277568088e9a2600f88591dcc14b01e612aa546c6c642ac
+# built govpilot/control-plane:1 sha256:5ca4e1952f62ae99422fc8758dbcb930e4ac9e12bcc58b383dd2717318ed03d2
+# built govpilot/discovery:1 sha256:7321d2ba3f30fcc7eb03c1ff46586f51a2484df8479bfb964f568d8848821414
+# built govpilot/mock-provider:1 sha256:7be00cab7bb25a1c899a249f25282e9954b9f7e21c3d91c4c71cea900eda14e0
+# built govpilot/status-page:1 sha256:8fea82d09d55f05ee697783e755a92cdcec259ab27e32a4affdbeb3bcf97b3ff
 
 # tooling (not part of the running stack): anchore/syft@sha256:500e2d872ac019436926e8322b4fc1f39441d94d21f6f4046c6ff29b30e8cb02
