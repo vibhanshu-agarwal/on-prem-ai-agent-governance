@@ -1,0 +1,9 @@
+id: finance-recon-agent
+team: finance
+models: [mock-local, mock-remote]
+budget: {max_usd: 2.0, duration: 30d}
+max_tokens_ceiling: 1024
+capabilities: [calls_tools, external_send]
+required_sandbox_tier: gvisor
+allowed_images: ["govpilot/finance-recon-agent:*"]
+require_human_approval: [payment.release, ledger.write_off]

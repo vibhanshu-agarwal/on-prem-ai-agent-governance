@@ -1,0 +1,12 @@
+# Global policy: sandbox tier ladder and what each declared capability demands.
+# Changing this file weakens or strengthens every agent; CODEOWNERS requires security review.
+schema_version: 1
+sandbox_tiers:            # weakest -> strongest
+  - container
+  - gvisor
+  - microvm
+capability_min_tier:      # a capability forces at least this tier
+  calls_tools: container
+  external_send: gvisor
+  executes_model_code: microvm
+default_max_tokens_ceiling: 1024

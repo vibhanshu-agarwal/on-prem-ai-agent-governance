@@ -1,0 +1,9 @@
+id: hr-agent
+team: hr
+models: [mock-local]
+budget: {max_usd: 1.0, duration: 30d}
+max_tokens_ceiling: 512
+capabilities: [calls_tools]
+required_sandbox_tier: container
+allowed_images: ["govpilot/hr-agent:*"]
+require_human_approval: [employee_record.update]

@@ -1,0 +1,3 @@
+name: finance
+models: [mock-local, mock-remote]
+budget: {max_usd: 10.0, duration: 30d}

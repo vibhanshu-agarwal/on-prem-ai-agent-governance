@@ -1,0 +1,9 @@
+id: coding-agent
+team: engineering
+models: [mock-local, mock-remote, mock-local-slow, mock-remote-slow]
+budget: {max_usd: 5.0, duration: 30d}
+max_tokens_ceiling: 2048
+capabilities: [calls_tools, executes_model_code]
+required_sandbox_tier: microvm
+allowed_images: ["govpilot/coding-agent:*"]
+require_human_approval: [git.push, deploy.production]

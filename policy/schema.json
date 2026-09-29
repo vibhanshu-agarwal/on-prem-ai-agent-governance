@@ -1,0 +1,190 @@
+{
+  "$defs": {
+    "AgentPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "team": {
+          "title": "Team",
+          "type": "string"
+        },
+        "models": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Models",
+          "type": "array"
+        },
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "max_tokens_ceiling": {
+          "exclusiveMinimum": 0,
+          "title": "Max Tokens Ceiling",
+          "type": "integer"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "required_sandbox_tier": {
+          "title": "Required Sandbox Tier",
+          "type": "string"
+        },
+        "allowed_images": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowed Images"
+        },
+        "require_human_approval": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Require Human Approval",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "team",
+        "models",
+        "budget",
+        "max_tokens_ceiling",
+        "required_sandbox_tier"
+      ],
+      "title": "AgentPolicy",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_usd": {
+          "exclusiveMinimum": 0,
+          "title": "Max Usd",
+          "type": "number"
+        },
+        "duration": {
+          "default": "30d",
+          "pattern": "^\\d+[smhd]$",
+          "title": "Duration",
+          "type": "string"
+        }
+      },
+      "required": [
+        "max_usd"
+      ],
+      "title": "Budget",
+      "type": "object"
+    },
+    "GlobalRules": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "sandbox_tiers": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Sandbox Tiers",
+          "type": "array"
+        },
+        "capability_min_tier": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Capability Min Tier",
+          "type": "object"
+        },
+        "default_max_tokens_ceiling": {
+          "exclusiveMinimum": 0,
+          "title": "Default Max Tokens Ceiling",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sandbox_tiers",
+        "capability_min_tier",
+        "default_max_tokens_ceiling"
+      ],
+      "title": "GlobalRules",
+      "type": "object"
+    },
+    "Team": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "models": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Models",
+          "type": "array"
+        },
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        }
+      },
+      "required": [
+        "name",
+        "models",
+        "budget"
+      ],
+      "title": "Team",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "globals": {
+      "$ref": "#/$defs/GlobalRules"
+    },
+    "teams": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Team"
+      },
+      "title": "Teams",
+      "type": "object"
+    },
+    "agents": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AgentPolicy"
+      },
+      "title": "Agents",
+      "type": "object"
+    }
+  },
+  "required": [
+    "globals",
+    "teams",
+    "agents"
+  ],
+  "title": "Policy",
+  "type": "object"
+}

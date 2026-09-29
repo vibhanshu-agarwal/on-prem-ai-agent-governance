@@ -1,0 +1,20 @@
+# Policy changes are approved by Git pull-request review (see docs/policy/README.md).
+# Syntax is GitHub/GitLab CODEOWNERS; replace the placeholder handles with real teams.
+# Last matching pattern wins.
+
+# Default: security owns all policy.
+/policy/                    @org/security-policy
+
+# Global rules (tier ladder, capability -> tier) need security AND platform.
+/policy/global.yaml         @org/security-policy @org/platform
+
+# Team budgets and model allowlists: finance-ops must approve spending changes.
+/policy/teams/              @org/security-policy @org/finops
+
+# Agent definitions: owning team lead plus security.
+/policy/agents/hr-agent.yaml               @org/security-policy @org/hr-leads
+/policy/agents/finance-recon-agent.yaml    @org/security-policy @org/finance-leads
+/policy/agents/coding-agent.yaml           @org/security-policy @org/eng-leads
+
+# Trust anchors (public signing keys): the most sensitive file in the repo.
+/policy/trust/              @org/security-policy @org/platform
