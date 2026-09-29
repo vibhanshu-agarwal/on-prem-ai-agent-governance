@@ -82,7 +82,11 @@ def test_default_max_tokens_ceiling_applies_when_omitted(gateway_url, keys):
     r = httpx.post(f"{gateway_url}/v1/chat/completions", headers=auth(keys["coding-agent"]["key"]), timeout=30,
                    json={"model": "mock-local", "messages": MESSAGES})
     assert r.status_code == 200
-    assert r.json()["usage"]["completion_tokens"] == 256  # litellm_params.max_tokens default
+    # T8: the agent default from deploy/agents.json (token_policy.default_max_tokens, enforced by the T2 budget
+    # guard) now applies before the model default (litellm_params.max_tokens = 256)
+    prov = json.loads((ROOT / "deploy" / "agents.json").read_text())["agents"]["coding-agent"]
+    want = prov.get("metadata", {}).get("token_policy", {}).get("default_max_tokens", 256)
+    assert r.json()["usage"]["completion_tokens"] == want
 
 
 def test_models_endpoint_honours_allowlist(gateway_url, keys):
@@ -105,7 +109,9 @@ def test_spend_is_nonzero_and_attributed(gateway_url, keys):
     assert float(r.headers["x-litellm-response-cost"]) == pytest.approx(expected, rel=1e-3)
     info = httpx.get(f"{gateway_url}/key/info", headers=auth(keys["finance-recon-agent"]["key"]),
                      timeout=10).json()["info"]
-    assert info["metadata"] == {"agent_id": "finance-recon-agent", "team": "finance"}
+    # T8: provisioning also writes token_policy (T2) and attribution (T4) from deploy/agents.json
+    prov = json.loads((ROOT / "deploy" / "agents.json").read_text())["agents"]["finance-recon-agent"]
+    assert info["metadata"] == {"agent_id": "finance-recon-agent", "team": "finance", **prov.get("metadata", {})}
     assert info["max_budget"] == 2.0
     assert info["team_id"] == keys["finance-recon-agent"]["team_id"]
     assert set(info["models"]) == {"mock-local", "mock-remote"}
@@ -169,9 +175,16 @@ def test_agent_container_has_no_internet():
 
 
 def test_only_gateway_on_agents_network():
+    """The gateway is the only service on the agents network; every other member is a governed agent
+    workload (T4 sample agents carry the govpilot.agent_id label), never a provider, DB or cache."""
     names = sh("docker", "network", "inspect", "govpilot_agents", "-f",
                "{{range .Containers}}{{.Name}} {{end}}").stdout.split()
-    assert sorted(names) == ["gov-gateway"]
+    assert "gov-gateway" in names
+    for n in names:
+        if n == "gov-gateway":
+            continue
+        label = sh("docker", "inspect", "-f", '{{index .Config.Labels "govpilot.agent_id"}}', n).stdout.strip()
+        assert label and label != "<no value>", f"{n} is on govpilot_agents but is not a governed agent workload"
 
 
 def test_providers_network_members_and_internal_flags():
