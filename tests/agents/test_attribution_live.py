@@ -156,8 +156,10 @@ def test_attribution_report_cli_prints_the_run_tree_and_flags_holes():
     c = L.run_container("samples.coding_agent", "coding-agent", key_env("coding-agent", L.ENV["CODING_AGENT_KEY"], 1), L.AGENTS_NET)
     root = next(iter(roots_of(L.events_of(c))))
     L.rows_for_roots({root}, since, expected=4)
+    # T8: --agent scopes the completeness check to this agent; on the integrated stack other suites' throwaway
+    # test keys (attribution mode audit) send run-id-less requests in the same window, which are holes by definition
     out = subprocess.run([sys.executable, str(L.ROOT / "scripts" / "attribution_report.py"), "--since", "10m", "--run", root,
-                          "--json"], capture_output=True, text=True, timeout=90, cwd=L.ROOT)
+                          "--agent", "coding-agent", "--json"], capture_output=True, text=True, timeout=90, cwd=L.ROOT)
     assert out.returncode == 0, out.stderr
     d = json.loads(out.stdout)
     tree = d["trees"][0]
