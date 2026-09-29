@@ -140,12 +140,17 @@ def account_orphans(orphans: dict[str, list[dict]], records: Iterable[dict], *, 
     starts: dict[str, dict] = {}
     ends: dict[str, dict] = {}
     agent_starts: dict[str, list[dict]] = collections.defaultdict(list)
+    def keep(table: dict, r: dict) -> None:
+        cur = table.get(r.get("run_id"))
+        if cur is None or (cur.get("source") == "docker-logs" and r.get("source") != "docker-logs"):
+            table[r.get("run_id")] = r          # the same run can be in both sources: the journal's record wins
+
     for r in sorted(records, key=lambda r: r.get("ts") or 0):
         ev = r.get("event")
         if ev == "run.start":
-            starts.setdefault(r.get("run_id"), r)
+            keep(starts, r)
         elif ev == "run.end":
-            ends.setdefault(r.get("run_id"), r)
+            keep(ends, r)
         elif ev == "agent.start":
             agent_starts[r.get("agent_id")].append(r)
     out = []

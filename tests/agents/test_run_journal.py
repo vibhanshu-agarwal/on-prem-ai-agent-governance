@@ -77,6 +77,14 @@ def test_default_sink_adds_the_journal_only_when_configured(tmp_path):
     assert isinstance(s, TeeSink) and any(isinstance(x, JournalSink) for x in s.sinks)
 
 
+def test_processes_running_as_the_same_agent_can_journal_to_files_of_their_own(tmp_path):
+    """A test container runs real agent code under a pilot identity: same agent id in the records, its own file."""
+    s = default_sink({"AGENT_JOURNAL_DIR": str(tmp_path), "AGENT_JOURNAL_NAME": "t4-coding-agent-abc123"}, "coding-agent")
+    s.emit({"event": "run.start", "agent_id": "coding-agent", "run_id": "run-abcdef12"})
+    assert [p.name for p in tmp_path.iterdir()] == ["t4-coding-agent-abc123.jsonl"]
+    assert read(tmp_path / "t4-coding-agent-abc123.jsonl")[0]["agent_id"] == "coding-agent"
+
+
 def test_error_fields_carry_the_gateway_refusal_when_there_is_one():
     e = GatewayError("nope", status=503, etype="guardrail_unavailable", run_id="run-abcdef12", attempts=2)
     f = error_fields(e)
@@ -179,6 +187,14 @@ def test_a_journal_record_of_another_agent_does_not_account_for_the_parent():
     ok = account({"p": [child(agent="finance-recon-agent.variance-1")]}, [
         rec("run.start", "p", NOW - 9), rec("run.end", "p", NOW - 8, status="ok")])
     assert ok["p"]["state"] == "ended_ok"                        # a delegated child agent is matched by its root agent
+
+
+def test_when_a_run_is_in_both_the_journal_and_the_container_logs_the_journal_record_wins():
+    logs = rec("run.start", "p", NOW - 9, boot="log:abc", source="docker-logs")
+    journal = rec("run.start", "p", NOW - 9)
+    for order in ([logs, journal], [journal, logs]):
+        got = account({"p": [child()]}, order + [rec("run.end", "p", NOW - 8, status="ok")])
+        assert got["p"]["state"] == "ended_ok" and got["p"]["source"] == "journal"
 
 
 def test_rotated_key_aliases_and_delegated_children_belong_to_their_agent():

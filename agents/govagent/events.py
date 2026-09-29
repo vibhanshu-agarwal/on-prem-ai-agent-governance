@@ -53,9 +53,9 @@ class JournalSink:
     generation (`.1`) is kept when the file passes `max_bytes`. A journal that cannot be written never breaks
     the agent: the error is counted, reported once on stderr, and the loop carries on."""
 
-    def __init__(self, directory: str, agent_id: str, *, max_bytes: int = 20_000_000,
+    def __init__(self, directory: str, name: str, *, max_bytes: int = 20_000_000,
                  only: frozenset[str] = JOURNAL_EVENTS) -> None:
-        self.path = os.path.join(directory, f"{agent_id}.jsonl")
+        self.path = os.path.join(directory, f"{name}.jsonl")
         self.max_bytes, self.only = max_bytes, only
         self.boot = uuid.uuid4().hex[:12]
         self.errors = 0
@@ -105,11 +105,14 @@ class TeeSink:
 
 
 def default_sink(env: Mapping[str, str], agent_id: str) -> EventSink:
-    """stdout always; plus the durable journal when AGENT_JOURNAL_DIR is set (compose.agents.yml sets it)."""
+    """stdout always; plus the durable journal when AGENT_JOURNAL_DIR is set (compose.agents.yml sets it).
+    The file is named after the agent id, or after AGENT_JOURNAL_NAME when several processes run as the same agent
+    (the records still carry the agent id, which is what a reader matches on)."""
     d = env.get("AGENT_JOURNAL_DIR")
     if not d:
         return StdoutSink()
-    return TeeSink(StdoutSink(), JournalSink(d, agent_id, max_bytes=int(env.get("AGENT_JOURNAL_MAX_BYTES", 20_000_000))))
+    return TeeSink(StdoutSink(), JournalSink(d, env.get("AGENT_JOURNAL_NAME") or agent_id,
+                                             max_bytes=int(env.get("AGENT_JOURNAL_MAX_BYTES", 20_000_000))))
 
 
 def error_fields(exc: BaseException) -> dict:

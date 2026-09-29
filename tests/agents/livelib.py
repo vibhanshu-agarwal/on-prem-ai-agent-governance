@@ -36,8 +36,48 @@ CP = f"http://127.0.0.1:{ENV.get('CP_PORT', '8100')}"
 MASTER = ENV.get("LITELLM_MASTER_KEY", "")
 
 
+IDP = f"http://127.0.0.1:{ENV.get('IDP_PORT', '8300')}"
+JOURNAL_VOLUME = "govpilot_agent_journal"
+
+
 def uid(p="t4") -> str:
     return f"{p}-{uuid.uuid4().hex[:6]}"
+
+
+def throwaway_key(alias: str, team: str = "engineering", models=("mock-local",), budget: float = 0.05) -> str:
+    """A key of its own for a contract test that needs a synthetic run tree. Traffic made with the pilot agents' real keys
+    is pilot traffic (M-01 counts it, and a synthetic parent run that never calls the gateway is a dangling link there),
+    so anything that pretends to be an agent uses an identity that is not one."""
+    teams = json.loads((ROOT / ".local" / "agent-keys.json").read_text())["teams"]
+    r = admin().post("/key/generate", json={
+        "key_alias": alias, "team_id": teams[team], "models": list(models), "max_budget": budget,
+        "metadata": {"agent_id": alias, "team": team, "attribution": {"mode": "enforce"},
+                     "token_policy": {"max_tokens_ceiling": 512, "default_max_tokens": 96}}})
+    assert r.status_code == 200, r.text
+    return r.json()["key"]
+
+
+def register_throwaway_agent(team: str, agent_id: str, budget: float = 0.05, models=("mock-local",)) -> dict:
+    """Register a throwaway agent through the control plane (as the IdP user alice); the response carries the gateway key
+    and the delegation token, shown once."""
+    tok = httpx.post(IDP + "/token", timeout=10, data={
+        "grant_type": "password", "username": "alice", "password": ENV["IDP_PASSWORD_ALICE"],
+        "audience": "govpilot-control-plane"}).json()["access_token"]
+    r = httpx.post(CP + "/v1/agents", timeout=30, headers={"Authorization": f"Bearer {tok}"}, json={
+        "agent_id": agent_id, "team": team, "owner": "alice", "max_budget_usd": budget, "models": list(models),
+        "sandbox_tier": "container"})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def delete_keys(*, aliases=(), hashes=()) -> None:
+    body = {}
+    if aliases:
+        body["key_aliases"] = list(aliases)
+    if hashes:
+        body["keys"] = list(hashes)
+    if body:
+        admin().post("/key/delete", json=body)
 
 
 def admin() -> httpx.Client:
@@ -122,8 +162,16 @@ def run_container(module: str, agent_id: str, env: dict, network: str, *, name: 
     import docker
     d = docker.from_env()
     labels = {"govpilot.agent_id": agent_id, "govpilot.root_agent_id": agent_id, **LABEL}
-    c = d.containers.run(IMAGE, ["python", "-m", module], name=name or uid(f"t4-{agent_id}"), detach=True,
-                         environment=env, network=network, labels=labels, mounts=mounts or [],
+    name = name or uid(f"t4-{agent_id}")
+    mounts = list(mounts or [])
+    try:                                    # a test container runs real agent code under a pilot identity: it journals too
+        d.volumes.get(JOURNAL_VOLUME)
+        mounts.append(docker.types.Mount("/var/lib/agent-journal", JOURNAL_VOLUME, type="volume"))
+        env = {"AGENT_JOURNAL_DIR": "/var/lib/agent-journal", "AGENT_JOURNAL_NAME": name, **env}
+    except docker.errors.NotFound:
+        pass
+    c = d.containers.run(IMAGE, ["python", "-m", module], name=name, detach=True,
+                         environment=env, network=network, labels=labels, mounts=mounts,
                          read_only=True, tmpfs={"/tmp": ""}, cap_drop=["ALL"], mem_limit="256m")
     if detach:
         return c

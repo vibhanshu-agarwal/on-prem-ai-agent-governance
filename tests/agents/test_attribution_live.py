@@ -254,22 +254,29 @@ class ChaosTransport:
 
 @L.resilient
 def test_retried_request_reaches_the_gateway_with_the_same_run_id_and_a_higher_attempt():
+    """Synthetic run tree (the root never calls the gateway), so it runs under a throwaway identity, not the coding
+    agent's key: as the coding agent it would be a dangling parent link in the pilot's own attribution test (M-01)."""
     since = L.utcnow()
     sink = MemorySink()
+    alias = L.uid("t4-retry")
+    key = L.throwaway_key(alias)
     t = ChaosTransport([TransportError("connection reset"), HttpResponse(503, {}, b'{"error":{"type":"service_unavailable"}}')])
-    gw = GatewayClient(L.GW, StaticKeyAuth(L.ENV["CODING_AGENT_KEY"]), transport=t, sink=sink,
+    gw = GatewayClient(L.GW, StaticKeyAuth(key), transport=t, sink=sink,
                        retry=RetryPolicy(max_attempts=4, base_delay_s=0.05), sleep=lambda s: None)
-    root = RunContext.root("coding-agent")
+    root = RunContext.root(alias)
     tool = root.child("tool", "tool:generate_code", tool="generate_code")
-    res = gw.chat(tool, "mock-local", [{"role": "user", "content": "write a function"}], max_tokens=8)
-    assert res.attempts == 3 and res.headers["x-govpilot-attempt"] == "3" and res.headers["x-govpilot-run-id"] == tool.run_id
-    assert {h["x-govpilot-run-id"] for h in t.sent} == {tool.run_id}
-    rows = L.rows_for_roots({root.run_id}, since, expected=1)
-    assert len(rows) == 1                                               # the two failed attempts never reached the gateway
-    r = rows[0]
-    assert (r["run_id"], r["parent_run_id"], r["root_run_id"], r["attempt"], r["tool"], r["run_kind"], r["agent"]) == \
-           (tool.run_id, root.run_id, root.run_id, 3, "generate_code", "tool", "coding-agent")
-    assert r["cost_usd"] == pytest.approx(res.cost_usd, rel=1e-6)
+    try:
+        res = gw.chat(tool, "mock-local", [{"role": "user", "content": "write a function"}], max_tokens=8)
+        assert res.attempts == 3 and res.headers["x-govpilot-attempt"] == "3" and res.headers["x-govpilot-run-id"] == tool.run_id
+        assert {h["x-govpilot-run-id"] for h in t.sent} == {tool.run_id}
+        rows = L.rows_for_roots({root.run_id}, since, expected=1)
+        assert len(rows) == 1                                               # the two failed attempts never reached the gateway
+        r = rows[0]
+        assert (r["run_id"], r["parent_run_id"], r["root_run_id"], r["attempt"], r["tool"], r["run_kind"], r["agent"]) == \
+               (tool.run_id, root.run_id, root.run_id, 3, "generate_code", "tool", alias)
+        assert r["cost_usd"] == pytest.approx(res.cost_usd, rel=1e-6)
+    finally:
+        L.delete_keys(aliases=[alias])
 
 
 @L.resilient
@@ -291,11 +298,16 @@ def test_gateway_side_refusal_then_success_is_one_run_two_rows():
 # ------------------------------------------------------------------ delegation, in-process against the real control plane
 @L.resilient
 def test_delegated_child_uses_an_attenuated_token_and_broadening_is_refused():
+    """Runs as a throwaway registered parent (with its own delegation token), not as the finance agent: the synthetic
+    root run never calls the gateway, which as `finance-recon-agent` would be a dangling parent link in M-01. The real
+    finance agent's delegation is covered end to end by the container test above."""
     since = L.utcnow()
     sink = MemorySink()
-    tok = L.ENV["FINANCE_DELEGATION_TOKEN"]
-    d = Delegator("finance-recon-agent", L.CP, tok, L.AUTHPROXY, sink, budget_usd=0.004, models=["mock-local"], ttl_s=600)
-    root = RunContext.root("finance-recon-agent")
+    parent = L.uid("t4dlg")
+    reg = L.register_throwaway_agent("finance", parent, budget=0.05, models=["mock-local"])
+    tok = reg["delegation_token"]
+    d = Delegator(parent, L.CP, tok, L.AUTHPROXY, sink, budget_usd=0.004, models=["mock-local"], ttl_s=600)
+    root = RunContext.root(parent)
     got = {}
 
     def sub(child_run, child_gw):
@@ -304,7 +316,7 @@ def test_delegated_child_uses_an_attenuated_token_and_broadening_is_refused():
     res = d.delegate(root, "t4-live", "variance", sub)
     child = sink.of("delegation.minted")[0]["child_agent_id"]
     try:
-        assert child.startswith("finance-recon-agent.t4-live-") and res.attempts == 1
+        assert child.startswith(f"{parent}.t4-live-") and res.attempts == 1
         rows = L.rows_for_roots({root.run_id}, since, expected=1)
         assert len(rows) == 1
         r = rows[0]
@@ -314,16 +326,16 @@ def test_delegated_child_uses_an_attenuated_token_and_broadening_is_refused():
             d.child("t4-live")[1].chat(got["run"], "mock-remote", [{"role": "user", "content": "x"}], max_tokens=4)
         assert ei.value.status in (401, 403)
         # broadening is denied and reported to the caller
-        wide = Delegator("finance-recon-agent", L.CP, tok, L.AUTHPROXY, sink, budget_usd=50.0, models=["mock-local"])
+        wide = Delegator(parent, L.CP, tok, L.AUTHPROXY, sink, budget_usd=50.0, models=["mock-local"])
         with pytest.raises(DelegationDenied) as di:
             wide.mint("t4-wide")
         assert any("budget" in x for x in di.value.reasons)
-        wide2 = Delegator("finance-recon-agent", L.CP, tok, L.AUTHPROXY, sink, budget_usd=0.001,
+        wide2 = Delegator(parent, L.CP, tok, L.AUTHPROXY, sink, budget_usd=0.001,
                           models=["mock-local", "mock-remote", "mock-remote-slow"])
         with pytest.raises(DelegationDenied):
             wide2.mint("t4-wide2")
     finally:
-        L.admin().post("/key/delete", json={"key_aliases": [child]})
+        L.delete_keys(aliases=[child], hashes=[k["key_hash"] for k in reg["agent"].get("gateway_keys", [])])
 
 
 # ------------------------------------------------------------------ demo: one agent goes rogue, the budget contains it
