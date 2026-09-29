@@ -8,7 +8,8 @@ the attenuation checks and alerting) and nothing else.
 
   python -m govagent.broker          env: CONTROL_PLANE_URL, BROKER_PORT (default 8090)
 
-It adds no authority: it forwards a whitelist of body fields and relays status and body unchanged.
+It adds no authority: it forwards a whitelist of body fields and relays status and body, minus the child's
+raw gateway key (the child must use its attenuated token, whose expiry and scope the auth proxy enforces).
 Deployed as `delegation-broker` in deploy/compose.agents.yml, attached to the SSO agents network and
 to the control plane's internal network.
 """
@@ -23,6 +24,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ALLOWED_FIELDS = ("parent_token", "name", "max_budget_usd", "models", "ttl_s", "capabilities")
 MAX_BODY = 16 * 1024
+
+
+def _strip_raw_key(raw: bytes) -> bytes:
+    """Drop the child's raw gateway key from a mint response. The agent must use the attenuated token
+    (through the auth proxy, which re-checks expiry, lineage and model scope on every call); a raw
+    virtual key would outlive the token's expiry caveat and bypass those checks."""
+    try:
+        d = json.loads(raw)
+    except ValueError:
+        return raw
+    if isinstance(d, dict) and "gateway_key" in d:
+        d.pop("gateway_key")
+        return json.dumps(d).encode()
+    return raw
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -55,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
                                      method="POST", headers={"content-type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
-                self._send(r.status, r.read())
+                self._send(r.status, _strip_raw_key(r.read()))
         except urllib.error.HTTPError as e:
             self._send(e.code, e.read() or b"{}")
         except (urllib.error.URLError, OSError) as e:

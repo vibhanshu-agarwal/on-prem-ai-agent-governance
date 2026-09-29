@@ -28,7 +28,7 @@ This callback (a separate file from budget_guard, nothing shared but the hook AP
              attempts (which never reach the spend table) are still attributable.
 
 Policy (key metadata > team metadata > env), all optional:
-  metadata.attribution: {"mode": "enforce" | "audit" | "off"}
+  metadata.attribution: {"mode": "enforce" | "audit" | "off"}   (present but unreadable -> enforce)
   env GOVPILOT_ATTRIBUTION_MODE (default "audit")
 
 Loose coupling: the only environment-specific things are the header names (constants
@@ -58,6 +58,9 @@ MODES = ("enforce", "audit", "off")
 # call types that spend money at a provider
 LLM_CALL_TYPES = {"completion", "acompletion", "text_completion", "atext_completion", "responses", "aresponses",
                   "embeddings", "aembedding", "anthropic_messages", "generate_content", "agenerate_content"}
+# call types that never reach a provider: left alone even in `enforce`. Every other call type (image,
+# audio, rerank, pass-through, ones a future LiteLLM adds) is treated as spending, so `enforce` fails closed.
+NON_SPEND_CALL_TYPES = {"list_models", "model_info", "health", "health_check", "token_counter", "count_tokens"}
 # keys the caller may never set through spend_logs_metadata: they are stamped from trusted sources
 RESERVED = {"agent_id", "team", "key_alias", "run_id", "parent_run_id", "root_run_id", "run_kind", "attempt",
             "tool", "attribution", "root_agent_id", "parent_agent_id", "user", "step"}
@@ -173,12 +176,15 @@ def _key_identity(u: Any) -> dict:
 
 
 def resolve_mode(user_api_key_dict: Any, default: str) -> str:
+    """Key metadata > team metadata > default. A policy that is present but unreadable (a typo such as
+    "Enforce", a wrong type) resolves to `enforce`: a misconfigured key must fail closed, not silently audit."""
     for src in ("metadata", "team_metadata"):
         md = getattr(user_api_key_dict, src, None)
-        pol = (md or {}).get("attribution") if isinstance(md, dict) else None
-        mode = pol.get("mode") if isinstance(pol, dict) else None
-        if mode in MODES:
-            return mode
+        if not isinstance(md, dict) or md.get("attribution") is None:
+            continue
+        pol = md["attribution"]
+        mode = pol.get("mode") if isinstance(pol, dict) else pol
+        return mode if mode in MODES else "enforce"
     return default
 
 
@@ -196,7 +202,8 @@ class RunAttribution(CustomLogger):
         self.sink = sink or SINKS[os.getenv("GOVPILOT_ATTRIBUTION_SINK", "log")]()
         self.default_mode = default_mode or os.getenv("GOVPILOT_ATTRIBUTION_MODE", "audit")
         if self.default_mode not in MODES:
-            self.default_mode = "audit"
+            log.error("GOVPILOT_ATTRIBUTION_MODE=%r is not one of %s; using enforce", self.default_mode, MODES)
+            self.default_mode = "enforce"
 
     def _emit(self, ev: dict) -> None:
         try:
@@ -206,11 +213,12 @@ class RunAttribution(CustomLogger):
 
     # ------------------------------------------------------------------ pre-call
     async def async_pre_call_hook(self, user_api_key_dict, cache, data: dict, call_type):
-        if str(call_type).split(".")[-1] not in LLM_CALL_TYPES:
-            return data
+        ct = str(call_type).split(".")[-1]
         mode = resolve_mode(user_api_key_dict, self.default_mode)
-        if mode == "off":
+        if mode == "off" or ct in NON_SPEND_CALL_TYPES:
             return data
+        if ct not in LLM_CALL_TYPES and mode != "enforce":
+            return data     # audit: only the known LLM routes are stamped; enforce covers every route
         rf, extra = parse_run_fields(data)
         ident = _key_identity(user_api_key_dict)
         if rf.run_id is None:

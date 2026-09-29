@@ -78,9 +78,9 @@ def test_reconciler_restops_revived_workloads(app):
 
 def test_admission_rule_for_code_execution(app):
     with pytest.raises(InvalidRequest):
-        app.register.register({"agent_id": "coder-x", "team": "eng", "capabilities": ["executes_code"],
+        app.register.register({"agent_id": "coder-x", "team": "eng", "capabilities": ["executes_model_code"],
                                "sandbox_tier": "container"}, OPS)
-    app.register.register({"agent_id": "coder-y", "team": "eng", "capabilities": ["executes_code"],
+    app.register.register({"agent_id": "coder-y", "team": "eng", "capabilities": ["executes_model_code"],
                            "sandbox_tier": "microvm"}, OPS)
 
 

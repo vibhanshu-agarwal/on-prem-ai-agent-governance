@@ -160,7 +160,10 @@ def test_policy_precedence_key_over_team_over_env(callback):
     assert r(_Key(md={"attribution": {"mode": "enforce"}}, team_md={"attribution": {"mode": "off"}}), "audit") == "enforce"
     assert r(_Key(team_md={"attribution": {"mode": "off"}}), "audit") == "off"
     assert r(_Key(), "audit") == "audit"
-    assert r(_Key(md={"attribution": {"mode": "nonsense"}}), "audit") == "audit"
+    # a policy that is present but unreadable fails closed
+    assert r(_Key(md={"attribution": {"mode": "nonsense"}}), "audit") == "enforce"
+    assert r(_Key(md={"attribution": {"mode": "Enforce"}}, team_md={"attribution": {"mode": "off"}}), "off") == "enforce"
+    assert r(_Key(md={"attribution": "audit"}), "enforce") == "audit"
 
 
 def test_identity_is_stamped_from_the_key_never_from_the_request(callback):
@@ -190,6 +193,20 @@ def test_non_llm_call_types_are_left_alone(callback):
     data = {"metadata": {}}
     assert _pre(cb, _Key({"attribution": {"mode": "enforce"}}), data, "list_models") is data
     assert "spend_logs_metadata" not in data["metadata"]
+
+
+@pytest.mark.parametrize("ct", ["aimage_generation", "atranscription", "arerank", "pass_through_endpoint",
+                                "some_future_call_type"])
+def test_enforce_covers_every_spending_route_not_only_chat(callback, ct):
+    cb = callback.RunAttribution(sink=type("S", (), {"emit": lambda s, e: None})())
+    with pytest.raises(Exception):
+        _pre(cb, _Key({"agent_id": "hr-agent", "attribution": {"mode": "enforce"}}), _req({}, {"model": "m"}), ct)
+    data = {"metadata": {}}   # audit leaves routes it does not know alone
+    assert _pre(cb, _Key({"agent_id": "hr-agent", "attribution": {"mode": "audit"}}), data, ct) is data
+
+
+def test_invalid_env_default_fails_closed(callback):
+    assert callback.RunAttribution(sink=type("S", (), {"emit": lambda s, e: None})(), default_mode="bogus").default_mode == "enforce"
 
 
 def test_response_headers_echo_run_and_agent(callback):

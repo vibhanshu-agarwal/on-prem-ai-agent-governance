@@ -51,6 +51,12 @@ for agent_id, want in spec["agents"].items():
         continue
     caps, subs = want.get("capabilities"), want.get("oidc_subjects") or []
     labels = want.get("labels") or {}
+    if caps is not None:
+        try:  # the register's own admission rule: a declared capability must not outrun the sandbox tier
+            a.register.check_admission(ag.sandbox_tier, caps)
+        except Exception as e:
+            out["changed"][agent_id] = f"capabilities refused: {e}"
+            continue
     changes = {}
     def fn(x):
         if caps is not None and sorted(x.capabilities) != sorted(caps):

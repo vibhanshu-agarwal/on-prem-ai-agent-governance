@@ -104,7 +104,7 @@ seed_agents:
     models: [mock-local, mock-remote, mock-local-slow, mock-remote-slow]
     link_key_aliases: [coding-agent]
     sandbox_tier: microvm
-    capabilities: [chat, calls_tools, executes_code]
+    capabilities: [chat, calls_tools, executes_model_code]
 
 # Stand-in IdP (govcp.idp). Passwords: env IDP_PASSWORD_<USER>; client secrets: env named by secret_env.
 idp:

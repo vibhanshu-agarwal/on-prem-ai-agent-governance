@@ -14,7 +14,9 @@ from .repository import AGENTS
 AGENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,94}$")
 TIER_ORDER = {"container": 0, "gvisor": 1, "microvm": 2}
 # Minimal deploy-time admission rule from report section 4 (T7 owns the full policy-as-code gate).
-CAPABILITY_MIN_TIER = {"executes_code": "microvm", "shell": "microvm", "calls_tools": "gvisor"}
+# Capability names and tiers mirror policy/global.yaml `capability_min_tier` (one vocabulary for T3 and T7).
+CAPABILITY_MIN_TIER = {"executes_model_code": "microvm", "shell": "microvm", "external_send": "gvisor",
+                       "calls_tools": "container"}
 
 
 def key_secret_path(agent_id: str, alias: str) -> str:

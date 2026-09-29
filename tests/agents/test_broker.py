@@ -20,7 +20,7 @@ class Upstream(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         body = json.loads(self.rfile.read(int(self.headers["content-length"])))
         Upstream.seen.append({"path": self.path, "body": body, "headers": dict(self.headers)})
-        out = json.dumps({"child_agent_id": "p.kid", "echo": body}).encode() if Upstream.status == 201 else \
+        out = json.dumps({"child_agent_id": "p.kid", "gateway_key": "sk-raw-child", "echo": body}).encode() if Upstream.status == 201 else \
             json.dumps({"error": "delegation_denied", "message": "no", "details": {"reasons": ["budget"]}}).encode()
         self.send_response(Upstream.status)
         self.send_header("content-length", str(len(out)))
@@ -53,6 +53,8 @@ def test_forwards_only_the_whitelisted_fields_to_the_delegation_endpoint(stack):
     assert seen["path"] == "/v1/delegations"
     assert set(seen["body"]) == {"parent_token", "name", "max_budget_usd", "models", "ttl_s"}
     assert "authorization" not in {k.lower() for k in seen["headers"]}          # the broker adds no authority
+    # the raw child key would outlive the delegation token's expiry and skip the auth proxy's scope checks
+    assert "gateway_key" not in r.json() and "sk-raw-child" not in r.text
 
 
 def test_denials_are_relayed_unchanged(stack):
