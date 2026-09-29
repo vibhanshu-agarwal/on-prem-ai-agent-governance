@@ -17,8 +17,8 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 | T6 observability/discovery | done, review PASS (23c69f1), 61 tests incl cp discovery | 37 tests; Grafana :3400; eBPF works but OpenLIT OSS rejects controller; real gateway otel wiring pending (see T6.md) |
 | T7 policy | done, review PASS (d105228), 58 tests | 52 tests; admission not yet wired to container start (T3/T8) |
 | T8 acceptance + integration | done, Fable review PASS (840c9e6) | 28/28 acceptance; all suites green; see ACCEPTANCE.md; scripts/up.sh, acceptance.sh (~80 min) |
-| T9 hardening/release | implemented (08ac365), in Opus review (incl full acceptance.sh rerun) | edge allowlist proxy, read-only non-root gateway, SBOMs, notices, runbook |
-| T10 showcase packaging | status page done, review PASS (9305ae6, :8400, STATUS_DEMO_MODE); README/demo after T8 | README, demo script |
+| T9 hardening/release | done, review fixes df15f3e/89f7bc1; full run 27/28 (M-01 orphans from Presidio outage during suite) | edge allowlist proxy, read-only non-root gateway, SBOMs, notices, runbook |
+| T10 showcase packaging | status page done (9305ae6); M-01 fix + README/demo in progress (impl-sonnet) | README, demo script |
 
 ## Log
 - 2026-09-29: repo initialised, sources extracted, plan and agent defs written.
@@ -33,3 +33,4 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 - T8 open items: SBOM\/notices\/runbook (T9); in-window harm only for tools that check control plane; hard-killed gateway leaves reservations (safe side); leaked network-cut helper containers.
 - T8 review leftovers: register.py:176 rotate_secrets returns 200 on failed delete+block; reconcile.py:60 no post-check revert; stream-kill only checked on chunk arrival (stalled provider not cut).
 - 2026-09-30: custom agent types (impl-sonnet etc.) now loaded; use them for remaining work.
+- T9 review open: client api_key passthrough; discovery ignores self-chosen gov-* names/labels.
