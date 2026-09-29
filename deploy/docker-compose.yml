@@ -108,6 +108,7 @@ services:
       LITELLM_TELEMETRY: "False"
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/callbacks:/app/callbacks:ro   # custom callbacks (T2 budget guard; T4 attribution)
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-4000}:4000"
     networks:

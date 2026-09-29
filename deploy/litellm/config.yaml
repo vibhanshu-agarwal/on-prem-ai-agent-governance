@@ -73,6 +73,16 @@ litellm_settings:
   drop_params: false
   request_timeout: 600
   # Extra hardening / callbacks are added by later tasks (T4 attribution, T5 guardrails).
+  # T2 budget guard (deploy/litellm/callbacks/budget_guard.py): enforces the agent
+  # max_tokens ceiling/default and makes worst-case cost fit the native reservation.
+  callbacks: ["callbacks.budget_guard.budget_guard"]
+  # T2: keep Redis spend counters alive for the whole budget period (>= budget_duration 30d).
+  # With the default 60 s TTL an idle counter expires and is reseeded from the Postgres
+  # key/team spend columns, which lose unflushed increments when the gateway restarts
+  # (proxy_batch_write_at window) -> measured overshoot. See docs/results/T2.md (delayed telemetry).
+  # v1.100.3 builds the coordination Redis BEFORE reading litellm_settings, so this value
+  # alone does not reach the spend counters; the budget guard applies it to them.
+  default_redis_ttl: 2678400
 
 router_settings:
   # Redis holds the shared spend/rate counters used by budget reservation.

@@ -1,0 +1,92 @@
+# Isolated T2 test stack: an override on deploy/docker-compose.yml, run as its own
+# compose project so destructive tests (stop Redis/Postgres, restart gateways) never
+# touch the shared `govpilot` stack. Managed by tests/budget/stack/t2stack.py:
+#
+#   GATEWAY_PORT=4100 docker compose -p govpilot-t2 --env-file deploy/.env \
+#     -f deploy/docker-compose.yml -f tests/budget/stack/docker-compose.t2.yml up -d --wait
+#
+# Relative paths resolve against deploy/ (the first compose file's directory).
+# Two gateways share this stack's Postgres/Redis/mocks:
+#   gateway         127.0.0.1:4100  generated config WITH the budget guard callback
+#   gateway-native  127.0.0.1:4101  same config WITHOUT it (native LiteLLM baseline)
+name: govpilot-t2
+
+services:
+  postgres:
+    container_name: t2-postgres
+  redis:
+    container_name: t2-redis
+  mock-local:
+    container_name: t2-mock-local
+  mock-remote:
+    container_name: t2-mock-remote
+
+  mock-runaway:          # non-conforming provider: ignores max_tokens (test fixture)
+    image: govpilot/mock-provider:1
+    container_name: t2-mock-runaway
+    command: ["uvicorn", "runaway_provider:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    environment:
+      RUNAWAY_TOKENS: "600"
+      PER_TOKEN_LATENCY_MS: "2"
+    volumes:
+      - ../tests/budget/stack/runaway_provider.py:/app/runaway_provider.py:ro
+    networks: [providers]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  gateway:
+    container_name: t2-gateway
+    restart: "no"
+    depends_on:
+      mock-runaway: {condition: service_healthy}
+    volumes:
+      - ../.local/t2/config.guarded.yaml:/app/config.yaml:ro
+
+  gateway-native:
+    image: ghcr.io/berriai/litellm:v1.100.3
+    container_name: t2-gateway-native
+    restart: "no"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      mock-local: {condition: service_healthy}
+      mock-remote: {condition: service_healthy}
+      mock-runaway: {condition: service_healthy}
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MOCK_LOCAL_API_KEY: ${MOCK_LOCAL_API_KEY}
+      MOCK_REMOTE_API_KEY: ${MOCK_REMOTE_API_KEY}
+      DISABLE_ADMIN_UI: "True"
+      LITELLM_LOG: INFO
+      LITELLM_MODE: PRODUCTION
+      LITELLM_TELEMETRY: "False"
+    volumes:
+      - ../.local/t2/config.native.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:${T2_NATIVE_PORT:-4101}:4000"
+    networks: [providers, backend, edge]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness',timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+networks:
+  agents:
+    name: govpilot_t2_agents
+  providers:
+    name: govpilot_t2_providers
+  backend:
+    name: govpilot_t2_backend
+  edge:
+    name: govpilot_t2_edge
