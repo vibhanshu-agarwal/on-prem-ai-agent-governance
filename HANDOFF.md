@@ -14,7 +14,7 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 | T3 control plane | done, Fable review PASS (0eb7f5c), 101 tests | 97 tests; stop 5-6 s, key refused ~0.1 s; see T3.md deviations (iptables RST, per-key block, sso network, port 4180) |
 | T4 agents | in progress (Sonnet) | |
 | T5 guardrails | in progress (Sonnet) | |
-| T6 observability/discovery | implemented, in Opus review | 37 tests; Grafana :3400; eBPF works but OpenLIT OSS rejects controller; real gateway otel wiring pending (see T6.md) |
+| T6 observability/discovery | done, review PASS (23c69f1), 61 tests incl cp discovery | 37 tests; Grafana :3400; eBPF works but OpenLIT OSS rejects controller; real gateway otel wiring pending (see T6.md) |
 | T7 policy | done, review PASS (d105228), 58 tests | 52 tests; admission not yet wired to container start (T3/T8) |
 | T8 acceptance | todo | |
 | T9 hardening/release | todo | |
