@@ -67,6 +67,7 @@ def make_agent(alice):
                 "models": list(models), "sandbox_tier": extra.pop("sandbox_tier", "container"), **extra}
         r = alice.post("/v1/agents", body)
         assert r.status_code == 201, r.text
+        cpclient.mark_drill_keys([k["key_hash"] for k in r.json()["agent"]["gateway_keys"]])
         created.append(r.json())
         return r.json()
 

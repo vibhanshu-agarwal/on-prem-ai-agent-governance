@@ -131,8 +131,18 @@ class GuardrailsHook(CustomLogger):
             pol = self.pipeline().config.resolve(ctx.agent_id, ctx.team)
         except Exception as e:
             raise self._fail_closed(e)
-        if pol.streaming == "passthrough":
-            self.pipeline().audit.emit("guardrail.stream_passthrough", agent_id=ctx.agent_id,
+        # T8: the streaming mode can also be set per key by the admin (key metadata
+        # `guardrails.streaming`, the same trust level as T2's token_policy / T4's attribution mode), e.g. for
+        # drill agents whose live token flow must be observable. It can never loosen a restricted or
+        # confidential agent. Buffering does not weaken a stop: a buffered stream is still cancelled upstream
+        # when the client connection dies (measured in tests/acceptance).
+        mode, source = pol.streaming, "policy"
+        kg = (getattr(user_api_key_dict, "metadata", None) or {}).get("guardrails")
+        if isinstance(kg, dict) and kg.get("streaming") in ("buffer", "passthrough"):
+            if kg["streaming"] == "buffer" or pol.data_classification not in ("restricted", "confidential"):
+                mode, source = kg["streaming"], "key_metadata"
+        if mode == "passthrough":
+            self.pipeline().audit.emit("guardrail.stream_passthrough", agent_id=ctx.agent_id, source=source,
                                        note="output guardrails NOT applied to this stream by policy")
             async for c in response:
                 yield c

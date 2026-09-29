@@ -81,6 +81,22 @@ def gw_admin() -> httpx.Client:
                         headers={"Authorization": f"Bearer {ENV['LITELLM_MASTER_KEY']}"})
 
 
+# T8: drill agents must stream token by token so a test can see the live stream being cut. The T5 guardrail
+# hook buffers streamed output by default (output redaction), so drill keys get the admin-set key policy
+# `guardrails.streaming: passthrough` (production agents keep buffering; a buffered stream is still cancelled
+# upstream when its connection dies, see tests/acceptance).
+DRILL_KEY_METADATA = {"guardrails": {"streaming": "passthrough"}}
+
+
+def mark_drill_keys(key_hashes) -> None:
+    gw = gw_admin()
+    for h in key_hashes:
+        info = gw.get("/key/info", params={"key": h}).json().get("info") or {}
+        md = {**(info.get("metadata") or {}), **DRILL_KEY_METADATA}
+        r = gw.post("/key/update", json={"key": h, "metadata": md})
+        r.raise_for_status()
+
+
 def chat(key: str, model: str = "mock-local", base: str = GW_URL, auth_scheme="Bearer") -> httpx.Response:
     return httpx.post(f"{base}/v1/chat/completions", timeout=30,
                       headers={"Authorization": f"{auth_scheme} {key}"},

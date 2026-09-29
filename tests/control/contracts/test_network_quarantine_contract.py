@@ -43,7 +43,8 @@ def fx(request):
         gw = cpclient.gw_admin()
         alias = cpclient.uid("t3nq")
         k = gw.post("/key/generate", json={"key_alias": alias, "models": ["mock-local-slow"], "max_budget": 0.05,
-                                           "metadata": {"agent_id": alias}}).json()
+                                           "metadata": {"agent_id": alias,
+                                                                        **cpclient.DRILL_KEY_METADATA}}).json()
         c = cpclient.run_agent_container(alias, "t3nq", {"AGENT_KEY": k["key"], "MODEL": "mock-local-slow",
                                                          "MAX_TOKENS": "200"})
         made.append((c, k["token"]))
