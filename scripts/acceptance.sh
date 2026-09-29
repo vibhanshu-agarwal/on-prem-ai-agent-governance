@@ -48,8 +48,13 @@ if [[ $ONLY_REPORT == 0 ]]; then
       grep -q 'failures="0"' "$RES/junit-$s.xml" && grep -q 'errors="0"' "$RES/junit-$s.xml" || FAILED+=("tests/$s")
       if [[ $s == guardrails ]]; then
         # the T5 live tests re-create Presidio with a test overlay (host ports, extra network): restore production
-        docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --no-deps --wait \
-          presidio-analyzer presidio-anonymizer >/dev/null 2>&1 || true
+        # (seen once: a re-created anonymizer hung in gunicorn boot and stayed unhealthy; Docker does not restart
+        # unhealthy containers, and every PII request then paid the 800 ms engine timeout -> retry with a restart)
+        for attempt in 1 2 3; do
+          docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --no-deps --wait --wait-timeout 120 \
+            presidio-analyzer presidio-anonymizer >/dev/null 2>&1 && break
+          docker restart gov-presidio-analyzer gov-presidio-anonymizer >/dev/null 2>&1 || true
+        done
         docker network rm govpilot_t5host >/dev/null 2>&1 || true
       fi
     done

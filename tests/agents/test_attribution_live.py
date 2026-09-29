@@ -167,7 +167,8 @@ def test_attribution_report_cli_prints_the_run_tree_and_flags_holes():
     assert {c["tool"] for c in tree["children"]} == {"plan_change", "generate_code"}
     assert tree["total_cost"] == pytest.approx(tree["own_cost"] + sum(c["own_cost"] for c in tree["children"]))
     assert d["completeness"]["complete"]
-    txt = subprocess.run([sys.executable, str(L.ROOT / "scripts" / "attribution_report.py"), "--since", "10m", "--run", root],
+    txt = subprocess.run([sys.executable, str(L.ROOT / "scripts" / "attribution_report.py"), "--since", "10m", "--run", root,
+                          "--agent", "coding-agent"],
                          capture_output=True, text=True, timeout=90, cwd=L.ROOT).stdout
     assert root in txt and "tool:plan_change" in txt and "COMPLETE" in txt
 

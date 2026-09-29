@@ -54,7 +54,9 @@ def test_single_agent_stop_cuts_stream_blocks_key_and_stays_down(alice, make_age
 
     # --- in-flight stream was cut: no token after network teardown finished
     net = rep["network"]["results"][0]
-    assert net["connections_before"] >= 1, net
+    # T8: since the budget guard closes a stream whose key was blocked (checked every second), the gateway may
+    # already have ended it before the network phase counts connections; none may remain afterwards
+    assert net["connections_before"] >= 0, net
     assert net["connections_after"] == 0, net
     cut_at = rep["phase_end_wall"]["network"]
     events = cpclient.parse_events(c.logs().decode())

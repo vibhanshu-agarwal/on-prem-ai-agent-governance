@@ -93,7 +93,9 @@ def test_quarantine_kills_live_connections(alice, drill, record):
         net_res = rep["network"]["results"][0]
         assert not tok_after, f"LLM stream kept flowing: {tok_after[:3]}"
         assert rx_last is not None and rx_last <= cut + 0.25, f"exfil bytes after the cut: last {rx_last} > {cut}"
-        assert net_res["connections_before"] >= 1 and net_res["connections_after"] == 0, net_res
+        # the gateway may already have closed the LLM stream itself (budget guard in-flight kill after the key block,
+        # T8) before the network phase counted, so connections_before can be 0; none may remain afterwards
+        assert net_res["connections_after"] == 0, net_res
         record(llm_tokens_after_cut=len(tok_after), exfil_last_byte_before_cut_s=round(cut - rx_last, 3),
                decision_to_network_cut_s=round(cut - t0, 2), chokepoint_connections_before=net_res["connections_before"],
                chokepoint_connections_after=net_res["connections_after"],
