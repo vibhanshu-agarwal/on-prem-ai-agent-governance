@@ -5,3 +5,5 @@ docs/source/*.pdf
 __pycache__/
 .venv/
 *.pyc
+.local/
+*.keys.json

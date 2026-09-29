@@ -1,0 +1,82 @@
+# LiteLLM OSS proxy config (v1.100.3). No Enterprise features used.
+#
+# Provider credentials are referenced from the gateway container env only
+# (os.environ/...). Nothing here is a secret.
+
+model_list:
+  # ---- mock-local: stands in for the on-prem "local model" ----------------
+  - model_name: mock-local
+    litellm_params:
+      model: openai/mock-local
+      api_base: http://mock-local:8000/v1
+      api_key: os.environ/MOCK_LOCAL_API_KEY
+      input_cost_per_token: 0.000001      # $1 per 1M input tokens
+      output_cost_per_token: 0.000002     # $2 per 1M output tokens
+      max_tokens: 256                     # default completion ceiling when the caller sends none
+    model_info:
+      max_output_tokens: 1024             # ceiling used by native budget reservation
+      max_input_tokens: 8192
+  - model_name: mock-local-slow           # same provider, very slow streaming (teardown tests)
+    litellm_params:
+      model: openai/mock-local-slow
+      api_base: http://mock-local:8000/v1
+      api_key: os.environ/MOCK_LOCAL_API_KEY
+      input_cost_per_token: 0.000001
+      output_cost_per_token: 0.000002
+      max_tokens: 256
+    model_info:
+      max_output_tokens: 1024
+      max_input_tokens: 8192
+
+  # ---- mock-remote: stands in for the approved remote provider ------------
+  - model_name: mock-remote
+    litellm_params:
+      model: openai/mock-remote
+      api_base: http://mock-remote:8000/v1
+      api_key: os.environ/MOCK_REMOTE_API_KEY
+      input_cost_per_token: 0.000005      # $5 per 1M input tokens
+      output_cost_per_token: 0.000015     # $15 per 1M output tokens
+      max_tokens: 256
+    model_info:
+      max_output_tokens: 1024
+      max_input_tokens: 8192
+  - model_name: mock-remote-slow
+    litellm_params:
+      model: openai/mock-remote-slow
+      api_base: http://mock-remote:8000/v1
+      api_key: os.environ/MOCK_REMOTE_API_KEY
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000015
+      max_tokens: 256
+    model_info:
+      max_output_tokens: 1024
+      max_input_tokens: 8192
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY        # from deploy/.env (generated, gitignored)
+  database_url: os.environ/DATABASE_URL            # enables virtual keys, teams, budgets, spend logs
+  # Budget reservation is on by default in this version (estimate max cost, reserve, reconcile).
+  # Fail closed: when Redis/cache counters are degraded, validate budgets against Postgres,
+  # and reject (503) if a reservation cannot be written. Supported in v1.100.3.
+  fail_closed_budget_enforcement: true
+  allow_requests_on_db_unavailable: false          # explicit: DB down => reject, never bypass auth/budgets
+  # Shared Redis for spend counters, budget reservations and rate limits (cross-pod coordination).
+  coordination_redis:
+    host: os.environ/REDIS_HOST
+    port: os.environ/REDIS_PORT
+    password: os.environ/REDIS_PASSWORD
+  disable_spend_logs: false
+  # Keep the DB spend log flush short so T2 tests observe spend quickly.
+  proxy_batch_write_at: 5
+
+litellm_settings:
+  drop_params: false
+  request_timeout: 600
+  # Extra hardening / callbacks are added by later tasks (T4 attribution, T5 guardrails).
+
+router_settings:
+  # Redis holds the shared spend/rate counters used by budget reservation.
+  redis_host: os.environ/REDIS_HOST
+  redis_port: os.environ/REDIS_PORT
+  redis_password: os.environ/REDIS_PASSWORD
+  num_retries: 0            # explicit: retry behaviour is exercised in T2, not hidden here

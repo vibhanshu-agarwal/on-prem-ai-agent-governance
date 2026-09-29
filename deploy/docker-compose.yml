@@ -1,0 +1,141 @@
+# T1 foundation stack. Run via scripts/bootstrap.sh (generates deploy/.env first).
+#
+# Networks
+#   agents     internal. Agent containers join this. Only `gateway` is reachable on it.
+#   providers  internal. Only `gateway` and the mock providers join it.
+#   backend    internal. Only `gateway`, postgres, redis.
+#   edge       normal bridge. Only `gateway` joins it, purely so Docker can publish
+#              the gateway port to 127.0.0.1 (internal networks cannot publish ports)
+#              and so the gateway could later reach approved remote providers.
+name: govpilot
+
+x-healthcheck-defaults: &hc
+  interval: 5s
+  timeout: 5s
+  retries: 30
+
+services:
+  postgres:
+    image: postgres:16.14-alpine
+    container_name: gov-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/bootstrap.sh}
+      POSTGRES_DB: litellm
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      <<: *hc
+
+  redis:
+    image: redis:7.4.8-alpine
+    container_name: gov-redis
+    restart: unless-stopped
+    # NOTE: no host port published. Host 6379 belongs to another project.
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?run scripts/bootstrap.sh}
+    volumes:
+      - redisdata:/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      <<: *hc
+
+  mock-local:
+    build: ../services/mock-provider
+    image: govpilot/mock-provider:1
+    container_name: gov-mock-local
+    restart: unless-stopped
+    environment:
+      PROVIDER_NAME: mock-local
+      MODELS: mock-local,mock-local-slow
+      FIRST_TOKEN_LATENCY_MS: "20"
+      PER_TOKEN_LATENCY_MS: "5"
+      SLOW_MODE: "0"
+      SLOW_FACTOR: "100"
+      # only a hash: the provider credential itself lives solely in the gateway env
+      API_KEY_SHA256: ${MOCK_LOCAL_API_KEY_SHA256:?run scripts/bootstrap.sh}
+    networks: [providers]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2)"]
+      <<: *hc
+
+  mock-remote:
+    image: govpilot/mock-provider:1
+    container_name: gov-mock-remote
+    restart: unless-stopped
+    depends_on: [mock-local]   # reuse the image built by mock-local
+    environment:
+      PROVIDER_NAME: mock-remote
+      MODELS: mock-remote,mock-remote-slow
+      FIRST_TOKEN_LATENCY_MS: "60"
+      PER_TOKEN_LATENCY_MS: "10"
+      SLOW_MODE: "0"
+      SLOW_FACTOR: "100"
+      API_KEY_SHA256: ${MOCK_REMOTE_API_KEY_SHA256:?run scripts/bootstrap.sh}
+    networks: [providers]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2)"]
+      <<: *hc
+
+  gateway:
+    image: ghcr.io/berriai/litellm:v1.100.3
+    container_name: gov-gateway
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      mock-local: {condition: service_healthy}
+      mock-remote: {condition: service_healthy}
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run scripts/bootstrap.sh}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?run scripts/bootstrap.sh}
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # provider credentials: present ONLY in the gateway container
+      MOCK_LOCAL_API_KEY: ${MOCK_LOCAL_API_KEY:?run scripts/bootstrap.sh}
+      MOCK_REMOTE_API_KEY: ${MOCK_REMOTE_API_KEY:?run scripts/bootstrap.sh}
+      DISABLE_ADMIN_UI: "True"
+      LITELLM_LOG: INFO
+      LITELLM_MODE: PRODUCTION       # do not auto-load a .env file / dev conveniences
+      LITELLM_TELEMETRY: "False"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-4000}:4000"
+    networks:
+      agents:
+        aliases: [gateway]
+      providers: {}
+      backend: {}
+      edge: {}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness',timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+networks:
+  agents:
+    name: govpilot_agents
+    internal: true
+  providers:
+    name: govpilot_providers
+    internal: true
+  backend:
+    name: govpilot_backend
+    internal: true
+  edge:
+    name: govpilot_edge
+
+volumes:
+  pgdata:
+  redisdata:
