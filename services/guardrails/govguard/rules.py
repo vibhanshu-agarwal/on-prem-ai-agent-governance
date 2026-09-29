@@ -35,9 +35,14 @@ INJECTION_PATTERNS: list[tuple[str, re.Pattern, int]] = [
                                  r"|^\s*#{2,}\s*(?:system|instruction)s?\b|^\s*(?:system|assistant)\s*:", re.M), 2),
     ("authority_claim", _P(r"\bthis is (?:an? )?(?:system|admin|administrator|developer|security) "
                            r"(?:message|override|notice|instruction)\b"), 2),
-    ("exfiltration_send", _P(
+    ("exfiltration_send", _P(  # generic (legit documents say "send the invoice to x@y"): below threshold alone
         r"\b(send|forward|email|e-mail|post|upload|exfiltrate|transmit|leak)\b[^.\n]{0,60}"
-        r"\b(?:to|at)\b[^.\n]{0,20}(?:https?://|[\w.+-]+@[\w-]+\.)"), 3),
+        r"\b(?:to|at)\b[^.\n]{0,20}(?:https?://|[\w.+-]+@[\w-]+\.)"), 2),
+    ("exfiltration_sensitive", _P(
+        r"\b(send|forward|email|e-mail|post|upload|exfiltrate|transmit|leak|share)\b[^.\n]{0,60}"
+        r"\b(?:passwords?|credentials?|api[ _-]?keys?|secrets?|tokens?|system prompt|conversation|chat history|"
+        r"customer (?:list|data|records)|database|private key|ssh key)\b[^.\n]{0,80}"
+        r"\b(?:to|at|via)\b[^.\n]{0,30}(?:https?://|[\w.+-]+@[\w-]+\.|\b\d{1,3}(?:\.\d{1,3}){3}\b)"), 3),
     ("markdown_image_exfil", _P(r"!\[[^\]]*\]\(https?://[^)\s]*[?&][^)\s]*=[^)\s]*\)"), 3),
     ("conceal_from_user", _P(r"\b(?:do not|don't|never|without)\b[^.\n]{0,20}\b(?:tell|inform|mention|alert|notify|show)\b"
                              r"[^.\n]{0,20}\b(?:the )?(?:user|human|operator)\b"), 3),
@@ -106,7 +111,7 @@ def redact_secrets(text: str) -> tuple[str, list[str]]:
         if s < pos:
             continue
         out.append(text[pos:s])
-        out.append(f"<SECRET:{name}>")
+        out.append(f"<REDACTED:{name}>")
         kinds.append(name)
         pos = e
     out.append(text[pos:])

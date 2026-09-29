@@ -39,7 +39,9 @@ defaults:
     input: mask                       # default action for the entities below: mask | block | allow
     output: redact                    # redact | block | allow
     scan_roles: [user, tool, function, assistant]
-    score_threshold: 0.5
+    score_threshold: 0.5              # Presidio scores an unlabelled phone number 0.4 (0.75 with a context word
+                                      # like "phone"); 0.5 keeps 10-digit invoice numbers out (see T5.md FP notes)
+    entity_thresholds: {}             # per-entity override, e.g. {PHONE_NUMBER: 0.4} for higher recall
     entities:                         # entity -> action ("default" = pii.input)
       EMAIL_ADDRESS: default
       PHONE_NUMBER: default
@@ -70,6 +72,7 @@ agents:
   hr-agent:
     data_classification: restricted
     pii:
+      entity_thresholds: {PHONE_NUMBER: 0.4}   # restricted data: prefer recall, accept more false positives
       entities: {EMAIL_ADDRESS: mask, PHONE_NUMBER: mask, CREDIT_CARD: block, US_SSN: block, IBAN_CODE: block, IP_ADDRESS: mask}
     secrets: {input: block, output: block}
     tools:

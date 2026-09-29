@@ -1,0 +1,45 @@
+# Test-only second gateway whose Presidio URL points at nothing, to prove fail-closed / degrade / open
+# behaviour through the REAL hook without stopping the shared Presidio (other agents' tests use the
+# shared gateway). Same image, config, callbacks, DB and Redis as `gateway`. Managed by
+# tests/guardrails/test_live_failmodes.py. Paths relative to deploy/.
+services:
+  gateway-guard-down:
+    image: ghcr.io/berriai/litellm:v1.100.3
+    container_name: gov-t5-gateway-down
+    restart: "no"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      mock-local: {condition: service_healthy}
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MOCK_LOCAL_API_KEY: ${MOCK_LOCAL_API_KEY}
+      MOCK_REMOTE_API_KEY: ${MOCK_REMOTE_API_KEY}
+      DISABLE_ADMIN_UI: "True"
+      LITELLM_LOG: INFO
+      LITELLM_MODE: PRODUCTION
+      LITELLM_TELEMETRY: "False"
+      GOVGUARD_PRESIDIO_ANALYZER_URL: http://127.0.0.1:9      # nothing listens here
+      GOVGUARD_PRESIDIO_ANONYMIZER_URL: http://127.0.0.1:9
+      GOVGUARD_STATE_DIR: /app/guardrails-state-down
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/callbacks:/app/callbacks:ro
+      - ../services/guardrails/govguard:/opt/govguard/govguard:ro
+      - ./guardrails:/app/guardrails:ro
+      - ../.local/guardrails-down:/app/guardrails-state-down
+    ports:
+      - "127.0.0.1:4105:4000"
+    networks: [providers, backend, edge]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness',timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s

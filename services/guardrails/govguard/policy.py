@@ -57,6 +57,7 @@ class EffectivePolicy:
     pii_output: str                        # redact | block | allow
     pii_output_entities: tuple[str, ...]
     score_threshold: float
+    entity_thresholds: dict[str, float]   # per-entity minimum score (overrides score_threshold)
     injection_action: str                  # block | neutralize | flag | off
     injection_threshold: int
     injection_scan: str                    # untrusted | all
@@ -71,6 +72,13 @@ class EffectivePolicy:
     approval_ttl_seconds: int
     streaming: str                         # buffer | passthrough
     raw: dict = field(default_factory=dict, compare=False, hash=False)
+
+    def min_score(self, entity: str) -> float:
+        return self.entity_thresholds.get(entity, self.score_threshold)
+
+    def engine_threshold(self) -> float:
+        """Lowest threshold worth asking the engine for; per-entity filtering happens afterwards."""
+        return min([self.score_threshold, *self.entity_thresholds.values()])
 
     def tool_class(self, name: str) -> str | None:
         return (self.tools_catalog.get(name) or {}).get("class")
@@ -183,6 +191,7 @@ class GuardrailConfig:
             pii_output=pii.get("output", "redact"),
             pii_output_entities=tuple(pii.get("output_entities") or list(ent)),
             score_threshold=float(pii.get("score_threshold", self.engine_cfg.get("score_threshold", 0.5))),
+            entity_thresholds={k: float(v) for k, v in (pii.get("entity_thresholds") or {}).items()},
             injection_action=inj.get("action", "block"),
             injection_threshold=int(inj.get("threshold", 3)),
             injection_scan=inj.get("scan", "untrusted"),

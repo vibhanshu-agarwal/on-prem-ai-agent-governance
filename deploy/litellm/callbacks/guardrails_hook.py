@@ -37,9 +37,10 @@ GUARDED_CALL_TYPES = {"completion", "acompletion"}
 def _reject(e):
     from litellm.proxy._types import ProxyException
     body = e.body()["error"]
-    extra = {k: v for k, v in body.items() if k not in ("message", "type", "code", "param")}
+    extra = {"guardrail_code": e.code,   # ProxyException.code is the HTTP status, so the machine code rides here
+             **{k: v for k, v in body.items() if k not in ("message", "type", "code", "param")}}
     return ProxyException(message=e.message, type=e.etype, param=None, code=e.status, openai_code=e.code,
-                          provider_specific_fields=extra or None)
+                          provider_specific_fields=extra)
 
 
 class GuardrailsHook(CustomLogger):
@@ -161,8 +162,8 @@ class GuardrailsHook(CustomLogger):
         except Exception as e:
             exc = self._fail_closed(e)
             for c in self._blocked_chunks(chunks, json.dumps({"error": {
-                    "message": exc.message, "type": exc.type, "code": exc.openai_code,
-                    **(exc.provider_specific_fields or {})}})):
+                    "message": exc.message, "type": exc.type, "param": None, "code": exc.code,
+                    "provider_specific_fields": exc.provider_specific_fields}})):
                 yield c
             return
         if content and new != content:

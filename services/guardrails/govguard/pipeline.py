@@ -148,7 +148,8 @@ class GuardrailPipeline:
     async def _analyze_texts(self, ctx, pol, out, texts: list[str], entities: list[str]) -> list[list[Span]] | None:
         """Spans per text (None => skipped by fail-open). Cached per message hash; uncached texts
         are analysed in ONE engine call (joined) so a multi-message prompt costs one round trip."""
-        ekey = (tuple(sorted(entities)), pol.score_threshold)
+        thr = pol.engine_threshold()
+        ekey = (tuple(sorted(entities)), thr)
         result: list[list[Span] | None] = [None] * len(texts)
         todo: list[int] = []
         for i, t in enumerate(texts):
@@ -164,7 +165,7 @@ class GuardrailPipeline:
                 start = len(joined) - len(texts[i])
                 offs.append((i, start, start + len(texts[i])))
             lang = self.config.engine_cfg.get("language", "en")
-            spans = await self._engine_call(ctx, pol, out, "analyze", joined, entities, lang, pol.score_threshold)
+            spans = await self._engine_call(ctx, pol, out, "analyze", joined, entities, lang, thr)
             if spans is None:
                 return None
             for i, s, e in offs:
@@ -173,7 +174,7 @@ class GuardrailPipeline:
                 result[i] = own
                 if not out.degraded:  # never cache fallback-engine answers as if they were the engine's
                     self.cache.put((hashlib.sha256(texts[i].encode()).hexdigest(), ekey), own)
-        return result  # type: ignore[return-value]
+        return [[x for x in r if x.score >= pol.min_score(x.entity_type)] for r in result]  # type: ignore[union-attr]
 
     async def _mask(self, ctx, pol, out, text: str, spans: list[Span]) -> str:
         r = await self._engine_call(ctx, pol, out, "anonymize", text, spans)
@@ -398,7 +399,7 @@ class GuardrailPipeline:
                 428, "approval_required", "pending_approval",
                 "Consequential action(s) require human approval. The model response was withheld; "
                 "approve via the approvals workflow, then retry with metadata.govguard_approval_id.",
-                status_="pending_approval", pending=pending)
+                state="pending_approval", pending=pending)
 
         if content:
             # 2. secrets on output

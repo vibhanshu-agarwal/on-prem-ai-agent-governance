@@ -1,0 +1,31 @@
+# Test-only echo provider for tests/guardrails (an overlay on the govpilot project so it joins
+# the internal providers network next to the gateway). Started/removed by tests/guardrails/conftest.py:
+#   docker compose -p govpilot --env-file deploy/.env -f deploy/docker-compose.yml \
+#     -f tests/guardrails/stack/compose.echo.yml up -d --no-deps mock-echo
+# Paths are relative to deploy/ (the first compose file's directory).
+# Also publishes Presidio on 127.0.0.1 (via a dedicated bridge) so host-side tests/benchmarks can
+# talk to it; production keeps Presidio on the internal backend network only.
+services:
+  presidio-analyzer:
+    ports: ["127.0.0.1:5301:3000"]
+    networks: [backend, t5host]
+  presidio-anonymizer:
+    ports: ["127.0.0.1:5302:3000"]
+    networks: [backend, t5host]
+  mock-echo:
+    image: govpilot/mock-provider:1
+    container_name: gov-t5-mock-echo
+    restart: "no"
+    command: ["uvicorn", "echo_provider:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    volumes:
+      - ../services/guardrails/testing/echo_provider.py:/app/echo_provider.py:ro
+    networks: [providers]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+networks:
+  t5host:
+    name: govpilot_t5host
