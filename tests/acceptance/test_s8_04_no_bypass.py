@@ -31,7 +31,8 @@ def _probe(network, host, port):
 @pytest.mark.accept(
     id="S8-04", title="No bypass",
     criterion="From both agent networks: providers, databases, Presidio, control plane and the internet are "
-              "unreachable, only the gateway / auth proxy answer; no provider credential in any agent container",
+              "unreachable, only the gateway / auth proxy answer; no provider credential in any agent container "
+              "(environment, mounts, filesystem scan as the agent's uid)",
     simplification="Docker internal networks stand in for Kubernetes NetworkPolicy + egress firewall; one host.")
 def test_no_bypass(record):
     results = {}
@@ -41,14 +42,25 @@ def test_no_bypass(record):
             out = _probe(net, host, port)
             results[f"{net} -> {host}:{port}"] = out
             assert out.startswith("BLOCKED:"), (net, host, port, out)
-    # no provider credential (nor its hash) in any agent container
+    # no provider credential in any agent container: environment, mounted host paths, and the container filesystem
+    # (a credential discovery an escaped agent would attempt; the agents run as non-root, so only readable files
+    # count, which is exactly what such an agent could read)
     env = L.read_env_file(L.ROOT / "deploy" / ".env")
     secrets = [env["MOCK_LOCAL_API_KEY"], env["MOCK_REMOTE_API_KEY"], env["LITELLM_MASTER_KEY"]]
-    checked = []
+    checked, fs_scanned = [], {}
     for c in L.dclient().containers.list(filters={"label": "govpilot.agent_id"}):
         blob = "\n".join(c.attrs["Config"]["Env"] or [])
-        assert not any(s in blob for s in secrets), f"{c.name} holds a provider/master credential"
+        assert not any(s in blob for s in secrets), f"{c.name} holds a provider/master credential in its environment"
+        for m in c.attrs.get("Mounts") or []:
+            src = (m.get("Source") or "").replace("\\", "/")
+            assert not (src.endswith(".env") or "/.local" in src or src.endswith("/deploy")), \
+                f"{c.name} mounts a host path that carries secrets: {src}"
+        hits = c.exec_run(["grep", "-rIlsF", *(x for s in secrets for x in ("-e", s)), "/",
+                           "--exclude-dir=proc", "--exclude-dir=sys", "--exclude-dir=dev"])
+        found = [l for l in hits.output.decode(errors="replace").splitlines() if l.strip()]
+        assert not found, f"{c.name} has a provider/master credential on its filesystem: {found[:5]}"
+        fs_scanned[c.name] = "no credential found (grep -r over / as the agent's own uid)"
         checked.append(c.name)
     assert {"gov-agent-hr", "gov-agent-finance", "gov-agent-coding"} <= set(checked)
-    record(probes=results, agent_containers_checked=checked,
+    record(probes=results, agent_containers_checked=checked, filesystem_scan=fs_scanned,
            positive_controls={"govpilot_agents": "gateway:4000 CONNECTED", "govpilot_agents_sso": "sso-gateway:8080 CONNECTED"})

@@ -134,6 +134,9 @@ def test_host_compromise_drill(alice, drill, record):
         L.wait_for_log(nc, r"END ")
         assert nc.exec_run(["test", "-e", "/tmp/ESCAPE_MARKER"]).exit_code != 0   # clean filesystem
     assert all(L.chat(rotated[a["agent"]["agent_id"]]["gateway_key"]).status_code == 200 for a, _ in on_host)
+    # the old keys stay dead after the lift + resume (deleted by the rotation, not merely blocked by the quarantine,
+    # which the resume would have undone)
+    assert all(L.chat(a["gateway_key"]).status_code == 401 for a, _ in on_host), "an old key came back with the resume"
     timings["rebuild_s"] = round(time.time() - t, 2)
     record(agents_on_host=len(on_host), bystander_unaffected=True, evidence_files=len(manifest["files"]),
            evidence_bytes=sum(m["bytes"] for m in manifest["files"].values()), manifest_sha256=manifest_sha,

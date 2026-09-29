@@ -73,3 +73,7 @@ def test_in_flight_exposure(alice, drill, record):
     for r in rows:
         assert r["within_bound"], r
         assert r["billing_ended_after_decision_s"] <= r["stream_would_take_s"] + 5, r
+        # not merely the max_tokens ceiling: the gateway must have cut the in-flight stream itself (key re-checked
+        # every second mid-stream, upstream closed once blocked), so billing ends with the stop, not 30-60 s later
+        assert r["billing_ended_after_decision_s"] <= r["stop_total_s"] + 5, \
+            f"stream ran on after the stop instead of being cut by the gateway: {r}"

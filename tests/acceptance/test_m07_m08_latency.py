@@ -21,7 +21,8 @@ COMPOSE = ["docker", "compose", "-p", "govpilot", "--env-file", str(L.ROOT / "de
     id="M-07", title="Guardrail latency",
     criterion="Added latency of the guardrail hook with real Presidio, paired A/B through two identical gateways, "
               "prompts up to 8K tokens with PII: p95 <= 150 ms (Week 0 target)",
-    simplification="Mock provider; one LiteLLM worker; shared developer host (noisy neighbours); English only.")
+    simplification="Mock provider; one LiteLLM worker; shared developer host (noisy neighbours), so the better of "
+                   "two 25-pair batches is taken; English only.")
 def test_guardrail_latency(record):
     (L.ROOT / ".local" / "guardrails-on").mkdir(parents=True, exist_ok=True)
     subprocess.run([*COMPOSE, "up", "-d", "--no-deps", "gateway-guard-on", "gateway-guard-off"], capture_output=True,

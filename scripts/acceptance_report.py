@@ -71,7 +71,9 @@ def measured(aid: str, m: dict) -> str:  # noqa: C901 - one formatter per accept
             n = len(m["probes"])
             return (f"{n} probes from both agent networks (providers, Postgres, Redis, Presidio, control plane, "
                     f"1.1.1.1, api.openai.com): all blocked; positive controls connected; no provider/master key in "
-                    f"{len(m['agent_containers_checked'])} agent containers")
+                    f"{len(m['agent_containers_checked'])} agent containers"
+                    + (" (environment, host mounts, and a `grep -r /` of each container filesystem as the agent's own uid)"
+                       if m.get("filesystem_scan") else ""))
         if aid == "S8-05":
             return (f"pending after **{m['seconds_to_pending_proposal']} s** (feed {m['feed']}), budget "
                     f"{m['budget_usd']}, no key; its calls got {', '.join(m['gateway_statuses_seen'])}")
@@ -184,6 +186,9 @@ def main() -> int:
     sim = json.loads((RES / "pilot_sim.json").read_text()) if (RES / "pilot_sim.json").exists() else None
     commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True,
                             text=True).stdout.strip()
+    if subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=no", "--",
+                       "tests", "scripts", "services", "deploy", "policy"], capture_output=True, text=True).stdout.strip():
+        commit += "+uncommitted-changes"     # a run on a dirty tree must say so
     L = []
     w = L.append
     ids = S8 + [i for _, ids_, _ in JUL for i in ids_]
