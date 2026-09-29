@@ -82,6 +82,39 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2)"]
       <<: *hc
 
+  # T5: self-hosted Presidio (pinned). Internal `backend` network only: agents cannot reach them.
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:2.2.362
+    container_name: gov-presidio-analyzer
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      WORKERS: "3"     # gunicorn workers: long prompts are analysed in parallel chunks (see T5.md latency)
+      RECOGNIZER_REGISTRY_CONF_FILE: /conf/recognizers.yaml   # structured PII only; drops FP-prone country recognizers
+    volumes:
+      - ./guardrails/presidio-recognizers.yaml:/conf/recognizers.yaml:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:3000/health',timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:2.2.362
+    container_name: gov-presidio-anonymizer
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:3000/health',timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
   gateway:
     image: ghcr.io/berriai/litellm:v1.100.3
     container_name: gov-gateway
@@ -92,6 +125,8 @@ services:
       redis: {condition: service_healthy}
       mock-local: {condition: service_healthy}
       mock-remote: {condition: service_healthy}
+      presidio-analyzer: {condition: service_healthy}
+      presidio-anonymizer: {condition: service_healthy}
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?run scripts/bootstrap.sh}
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?run scripts/bootstrap.sh}
@@ -108,7 +143,10 @@ services:
       LITELLM_TELEMETRY: "False"
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
-      - ./litellm/callbacks:/app/callbacks:ro   # custom callbacks (T2 budget guard; T4 attribution)
+      - ./litellm/callbacks:/app/callbacks:ro   # custom callbacks (T2 budget guard; T4 attribution; T5 guardrails)
+      - ../services/guardrails/govguard:/opt/govguard/govguard:ro   # T5 guardrail pipeline (imported by the hook)
+      - ./guardrails:/app/guardrails:ro                             # T5 guardrail policy
+      - ../.local/guardrails:/app/guardrails-state                  # T5 audit log, overrides, approvals (rw)
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-4000}:4000"
     networks:

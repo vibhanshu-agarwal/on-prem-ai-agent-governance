@@ -1,0 +1,95 @@
+# Guardrail policy (T5). Resolution per request: defaults <- teams.<team> <- agents.<agent_id>.
+# Agent identity = LiteLLM virtual-key metadata (agent_id, team) set by provisioning.
+# Signed-policy overlay (optional, GOVGUARD_POLICY_STORE/TRUST): agent capabilities and
+# require_human_approval from the verified bundle can only TIGHTEN what is written here.
+version: 1
+
+engine:
+  type: presidio                      # presidio | builtin | package.module:factory (see docs/results/T5.md)
+  analyzer_url: http://presidio-analyzer:3000
+  anonymizer_url: http://presidio-anonymizer:3000
+  language: en
+  timeout_ms: 800                     # per analyzer call; exceeded => engine unavailable => fail mode
+  breaker_seconds: 2                  # after a failure, fail fast for this long instead of timing out per request
+  score_threshold: 0.5
+  chunk_chars: 6000                   # long texts are split and analysed concurrently
+  chunk_overlap: 96
+  cache_size: 4096                    # per-message analysis cache (agents resend conversation history)
+
+# What happens when the engine cannot answer, by the agent's data classification:
+#   closed  -> reject the request (503) / withhold the response
+#   degrade -> fall back to the builtin regex engine (structured PII only, no NER), audited
+#   open    -> skip the PII check, audited
+fail_modes:
+  public: open
+  internal: degrade
+  confidential: closed
+  restricted: closed
+
+overrides:
+  max_ttl_seconds: 86400              # hard cap on any false-positive override
+
+audit:
+  record_clean: true                  # also log clean requests (latency evidence); false in busy prod
+
+defaults:
+  data_classification: internal
+  streaming: buffer                   # buffer | passthrough (passthrough skips OUTPUT guardrails; audited)
+  pii:
+    input: mask                       # default action for the entities below: mask | block | allow
+    output: redact                    # redact | block | allow
+    scan_roles: [user, tool, function, assistant]
+    score_threshold: 0.5
+    entities:                         # entity -> action ("default" = pii.input)
+      EMAIL_ADDRESS: default
+      PHONE_NUMBER: default
+      CREDIT_CARD: block
+      US_SSN: block
+      IBAN_CODE: default
+      IP_ADDRESS: default
+  injection:
+    action: block                     # block | neutralize | flag | off
+    threshold: 3                      # summed heuristic weight (see govguard/rules.py)
+    scan: untrusted                   # untrusted (tool results, marked content) | all (every non-system message)
+  secrets:
+    input: mask                       # mask | block | allow
+    output: redact                    # redact | block | allow
+  tools:
+    allow: []                         # least privilege: no tools unless an agent lists them
+    on_violation: block               # block | strip (request-side only)
+    catalog: {}
+  approval:
+    required_classes: [external_send, payment, destructive_write]
+    required_actions: []
+    bind_arguments: true              # an approval is valid only for the exact arguments that were reviewed
+    ttl_seconds: 900
+
+teams: {}
+
+agents:
+  hr-agent:
+    data_classification: restricted
+    pii:
+      entities: {EMAIL_ADDRESS: mask, PHONE_NUMBER: mask, CREDIT_CARD: block, US_SSN: block, IBAN_CODE: block, IP_ADDRESS: mask}
+    secrets: {input: block, output: block}
+    tools:
+      allow: [lookup_employee, update_employee_record]
+      catalog:
+        update_employee_record: {class: destructive_write, action: employee_record.update}
+  finance-recon-agent:
+    data_classification: confidential
+    tools:
+      allow: [fetch_ledger, send_email, release_payment, write_off]
+      catalog:
+        send_email: {class: external_send, action: email.send}
+        release_payment: {class: payment, action: payment.release}
+        write_off: {class: destructive_write, action: ledger.write_off}
+  coding-agent:
+    data_classification: internal
+    pii:
+      output: redact
+    tools:
+      allow: [read_file, write_file, run_tests, git_push, deploy_production]
+      catalog:
+        git_push: {class: external_send, action: git.push}
+        deploy_production: {class: external_send, action: deploy.production}

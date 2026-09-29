@@ -1,0 +1,34 @@
+# Presidio analyzer recognizer registry for the pilot: structured PII only.
+# Deliberately NOT the image default: the country-specific recognizers (NHS, ES/IT/PL ids, ...)
+# fire on ordinary digit strings (measured: an SSN-shaped number came back as UK_NHS), which is
+# a false-positive source with no value for this deployment. NER entities (PERSON, LOCATION) come
+# from the spaCy NLP engine and are available if a policy lists them (they are OFF in the pilot
+# policy because of false positives; see docs/results/T5.md).
+supported_languages:
+  - en
+global_regex_flags: 26
+
+recognizers:
+  - name: CreditCardRecognizer
+    supported_languages:
+    - language: en
+      context: [credit, card, visa, mastercard, cc, amex, discover, jcb, diners, maestro, instapayment]
+    type: predefined
+  - name: UsSsnRecognizer
+    supported_languages:
+    - en
+    type: predefined
+  - name: UsBankRecognizer
+    supported_languages:
+    - en
+    type: predefined
+  - name: IbanRecognizer
+    type: predefined
+  - name: EmailRecognizer
+    type: predefined
+  - name: IpRecognizer
+    type: predefined
+  - name: PhoneRecognizer
+    type: predefined
+  - name: CryptoRecognizer
+    type: predefined
