@@ -75,7 +75,10 @@ litellm_settings:
   # Extra hardening / callbacks are added by later tasks (T4 attribution, T5 guardrails).
   # T2 budget guard (deploy/litellm/callbacks/budget_guard.py): enforces the agent
   # max_tokens ceiling/default and makes worst-case cost fit the native reservation.
-  callbacks: ["callbacks.budget_guard.budget_guard"]
+  # T4 run attribution (deploy/litellm/callbacks/run_attribution.py): stamps run/parent run/agent/team
+  # into the spend logs; rejects requests without a run id for keys whose metadata says
+  # attribution.mode=enforce (default mode: audit).
+  callbacks: ["callbacks.budget_guard.budget_guard", "callbacks.run_attribution.run_attribution"]
   # T2: keep Redis spend counters alive for the whole budget period (>= budget_duration 30d).
   # With the default 60 s TTL an idle counter expires and is reseeded from the Postgres
   # key/team spend columns, which lose unflushed increments when the gateway restarts
