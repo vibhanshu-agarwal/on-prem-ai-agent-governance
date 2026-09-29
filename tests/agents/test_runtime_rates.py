@@ -75,6 +75,40 @@ def test_loop_runs_at_the_configured_concurrency_and_stops_at_max_iterations(tmp
     assert sink.of("agent.stop")[0]["iterations"] == 7
 
 
+def test_a_sleeping_agent_wakes_when_the_rates_file_changes_and_on_stop(tmp_path):
+    import threading
+    f = tmp_path / "rates.json"
+    write(f, {"a-agent": {"interval_s": 300}})
+    rt = AgentRuntime("a-agent", MemorySink(), rates_path=str(f), env={})
+    rt.settings()                                           # reads the file (mtime remembered)
+    done = threading.Event()
+    threading.Thread(target=lambda: (rt._nap(60), done.set()), daemon=True).start()
+    assert not done.wait(1.0), "must keep sleeping while nothing changes"
+    write(f, {"a-agent": {"interval_s": 0.05, "concurrency": 8}})
+    assert done.wait(3.0), "a changed rates file must end the nap"
+    done.clear()
+    rt.settings()
+    threading.Thread(target=lambda: (rt._nap(60), done.set()), daemon=True).start()
+    rt.stop_evt.set()
+    assert done.wait(3.0), "a stop signal must end the nap"
+
+
+def test_a_rates_file_that_stays_broken_does_not_turn_the_loop_into_a_busy_loop(tmp_path):
+    import threading
+    f = tmp_path / "rates.json"
+    write(f, {"a-agent": {"interval_s": 300}})
+    rt = AgentRuntime("a-agent", MemorySink(), rates_path=str(f), env={})
+    rt.settings()
+    f.write_text("{ not json")                              # half-written / broken and it stays that way
+    st = f.stat()
+    os.utime(f, (st.st_atime, st.st_mtime + 2))
+    rt._nap(0.2)                                            # wakes once for the change ...
+    done = threading.Event()
+    threading.Thread(target=lambda: (rt._nap(60), done.set()), daemon=True).start()
+    assert not done.wait(1.5), "... but the next nap sleeps normally (the file is unchanged since it started)"
+    rt.stop_evt.set()
+
+
 def test_paused_agent_does_not_work(tmp_path):
     f = tmp_path / "rates.json"
     write(f, {"a-agent": {"paused": True}})

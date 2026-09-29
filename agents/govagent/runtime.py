@@ -5,8 +5,8 @@ Loop rate is configuration, not code. Effective settings for an agent are, lowes
   <  rates file entry for the agent id
 
 The rates file (JSON, default /etc/agents/rates.json, mounted from deploy/agents/config/) is
-re-read whenever its mtime changes, so an operator can change a rate on a RUNNING agent, e.g. make
-one "go rogue" for a demo, without a restart:
+re-read whenever its mtime changes (a sleeping agent wakes within ~0.5 s of the change), so an operator can change
+a rate on a RUNNING agent, e.g. make one "go rogue" for a demo, without a restart:
 
   python scripts/agents_ctl.py rogue finance-recon-agent      # 40 req/s-ish, ignores budget refusals
   python scripts/agents_ctl.py calm finance-recon-agent       # back to the configured rate
@@ -74,6 +74,13 @@ class RatesFile:
         self._mtime = -1.0
         self._data: dict = {}
 
+    def mtime(self) -> float | None:
+        """Modification time of the file (one stat); None when there is no file."""
+        try:
+            return os.stat(self.path).st_mtime if self.path else None
+        except OSError:
+            return None
+
     def get(self, agent_id: str) -> dict:
         if not self.path:
             return {}
@@ -98,13 +105,24 @@ class AgentRuntime:
         self.env = env if env is not None else dict(os.environ)
         self.rates = RatesFile(rates_path if rates_path is not None else self.env.get("AGENT_RATES_FILE", "/etc/agents/rates.json"))
         self.stop_evt = threading.Event()
-        self.sleep = sleep or (lambda s: self.stop_evt.wait(s))
+        self.sleep = sleep or self._nap
         self.max_iterations = max_iterations if max_iterations is not None else (
             int(self.env["AGENT_MAX_ITERATIONS"]) if self.env.get("AGENT_MAX_ITERATIONS") else None)
         self.iterations = 0
         self.failures = 0
         self._last_profile = None
         self._budget_strikes = 0
+
+    def _nap(self, seconds: float) -> None:
+        """The default sleep between iterations: ends early on a stop signal or when the rates file changes, so an
+        operator's change (e.g. `agents_ctl.py rogue`) reaches a slow agent within ~0.5 s instead of after its interval."""
+        end = time.time() + seconds
+        seen = self.rates.mtime()          # relative to the start of THIS nap: a file that stays unreadable wakes it once, not forever
+        while not self.stop_evt.is_set():
+            left = end - time.time()
+            if left <= 0 or self.rates.mtime() != seen:
+                return
+            self.stop_evt.wait(min(0.5, left))
 
     def settings(self) -> LoopSettings:
         s = LoopSettings.merge(env_layer(self.env), self.rates.get(self.agent_id))
