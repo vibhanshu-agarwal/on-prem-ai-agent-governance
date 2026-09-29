@@ -119,7 +119,7 @@ host ([full report](docs/results/ACCEPTANCE.md), including what each test simpli
 | Shadow agent | An unregistered container calling the gateway is a pending proposal after **1.0 s**, with budget $0 and no key; its calls got 401 | S8-05 |
 | No bypass | 17 probes from the agent networks (providers, Postgres, Redis, Presidio, control plane, internet) all blocked; no provider or master key in any agent container | S8-04 |
 | Quarantine | 4 agents in 2 teams contained 9.0 s after the second approver; a revived container was re-stopped in 2.4 s; LLM tokens after the network cut: 0 | S8-06, S8-09 |
-| Attribution | Every one of 1,377 requests in the test window attributed to agent, run and team (0 unattributed); runs aborted before a call of their own are accounted for from the agents' run journal | M-01 |
+| Attribution | 1,377 requests in the 30-min window: 1,360 attributed to agent, run and team, 17 refused before any spend (these carry the agent but not the run), **0 unattributed**; both parent runs without a gateway row of their own are accounted for from the agents' run journal (aborted by a fail-closed 503), 0 unaccounted | M-01 |
 | Everything | **28 of 28 acceptance tests pass**; the eight component suites add 615 tests (hardening 68, foundation 32, policy 58, control 110, discovery 44, agents 141, guardrails 125, budget 37), all passing in the same run | `scripts/acceptance.sh --fresh` |
 
 ## Findings
@@ -158,7 +158,7 @@ Needs Docker (Desktop or Engine), Git Bash or any POSIX shell, and Python 3.12 o
 ```bash
 python -m venv .venv
 .venv/Scripts/pip install -r tests/control/requirements.txt      # Linux/macOS: .venv/bin/pip
-bash scripts/up.sh          # everything, in dependency order; about 10 min cold, 2 min warm
+bash scripts/up.sh          # everything, in dependency order; the first run builds the images
 ```
 
 - Status page: <http://127.0.0.1:8400> (agents, live spend, stop button, discovery queue, audit log)
@@ -167,7 +167,7 @@ bash scripts/up.sh          # everything, in dependency order; about 10 min cold
 
 ```bash
 bash scripts/demo.sh        # the walkthrough shown above (about 2.5 min), narrated in the terminal
-bash scripts/acceptance.sh  # every test, 60 to 90 min unattended; writes docs/results/ACCEPTANCE.md
+bash scripts/acceptance.sh  # every test, 60 to 80 min unattended; writes docs/results/ACCEPTANCE.md
 bash scripts/down.sh        # stop everything (add --volumes to also delete data)
 ```
 
@@ -207,7 +207,8 @@ Stated plainly, because a recruiter or a sponsor should not have to find them.
   policies. Sandbox tiers (`container`, `gvisor`, `microvm`) are labels enforced at admission, not real runtimes.
   Docker Desktop has no `SOCK_DESTROY`, so live connections are cut with injected TCP resets.
 - **One of everything.** One host, one gateway replica, one Postgres, one Redis. No high availability or failover;
-  after a Redis outage enforcement recovers about a minute later (fail closed meanwhile).
+  after a Redis outage the gateway can keep refusing for up to about a minute once Redis is back (58 s in the T2
+  suite, 0.1 s in the acceptance run; fail closed meanwhile).
 - **Identity.** A stand-in OIDC issuer; certificate (mTLS) agents are not built.
 - **Stop is an operator's decision.** Nothing in the platform decides to stop an agent by itself; the pilot simulation
   uses a spend-rate watchdog script to show the loop closing.
