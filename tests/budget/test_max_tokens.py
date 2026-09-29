@@ -110,3 +110,27 @@ def test_reservation_covers_worst_case_under_any_max_tokens(guarded, record):
     record(spend=total, cap=cap, admitted=sum(r.status_code == 200 for r in rs), max_completion=max_completion)
     assert total <= cap + EPS
     assert max_completion <= 1024
+
+
+def test_unguarded_route_rejected_for_budgeted_key(guarded, record):
+    """/v1/messages (call_type anthropic_messages) is priced and reserved natively but the
+    guard cannot shape it, so the native gaps (no ceiling, partial reservation) would apply.
+    Default policy: reject budgeted requests on such routes; unbudgeted keys pass through."""
+    key = guarded.new_key(max_budget=0.002)
+    free = guarded.new_key()
+    t0 = time.time()
+    body = {"model": "mock-local", "max_tokens": 100000, "messages": [{"role": "user", "content": "one two three four"}]}
+
+    async def go():
+        async with httpx.AsyncClient(timeout=60) as c:
+            a = await c.post(f"{guarded.url}/v1/messages", headers={"Authorization": f"Bearer {key.key}"}, json=body)
+            b = await c.post(f"{guarded.url}/v1/messages", headers={"Authorization": f"Bearer {free.key}"}, json=body)
+            return a, b
+    a, b = asyncio.run(go())
+    record(budgeted_status=a.status_code, budgeted_error=error_of(a).get("type"), unbudgeted_status=b.status_code,
+           counter_after=guarded.counter("key", key.token))
+    assert a.status_code == 400 and error_of(a)["type"] == "route_not_budget_guarded"
+    assert guarded.counter("key", key.token) == 0.0          # reservation released
+    assert b.status_code != 400 or error_of(b).get("type") != "route_not_budget_guarded"
+    evs = [ev for ev in guarded.budget_events(since=t0) if ev["key_hash"] == key.token]
+    assert any(ev["event"] == "budget.unguarded_route_rejected" for ev in evs)

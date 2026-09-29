@@ -42,7 +42,15 @@ Configuration (loose coupling: everything comes from config, not code):
        GOVPILOT_BUDGET_EVENT_SINK (adapter name; only "log" exists today),
        GOVPILOT_BUDGET_GUARD_REQUIRE_DB (default true), GOVPILOT_BUDGET_GUARD_DB_PROBE_SECONDS (2),
        GOVPILOT_BUDGET_GUARD_DB_STALE_SECONDS (5), GOVPILOT_SPEND_COUNTER_TTL_SECONDS
-       (default: litellm_settings.default_redis_ttl).
+       (default: litellm_settings.default_redis_ttl),
+       GOVPILOT_BUDGET_GUARD_UNGUARDED_ROUTES (reject|allow, default reject: budgeted requests on
+       priced routes this hook cannot shape, e.g. /v1/messages, /v1/responses, embeddings, get 400),
+       GOVPILOT_BUDGET_GUARD_REQUIRE_TTL_PIN (default true: if the counter-TTL pin cannot be applied,
+       budgeted requests get 503 instead of silently running with the native 60 s TTL).
+
+Fail-closed by construction: any exception raised in async_pre_call_hook propagates through
+ProxyLogging.pre_call_hook (`except Exception: raise`) and fails the request; the failure
+hook then releases the native reservation.
 
 Single file on purpose: LiteLLM loads it by path (callbacks.budget_guard.budget_guard),
 so it cannot use package-relative imports. The two ports (PolicySource,
@@ -66,6 +74,9 @@ log = logging.getLogger("govpilot.budget_guard")
 
 TOKEN_FIELDS = ("max_completion_tokens", "max_tokens", "max_output_tokens")
 GUARDED_CALL_TYPES = {"completion", "acompletion", "text_completion", "atext_completion"}
+# Any of these on the auth object means native reservation has a counter to enforce.
+BUDGET_ATTRS = ("max_budget", "team_max_budget", "user_max_budget", "end_user_max_budget",
+                "model_max_budget", "max_budget_in_team", "org_max_budget")
 ROUTE_FOR_ESTIMATE = "/chat/completions"
 EPS = 1e-9
 
@@ -164,6 +175,10 @@ def _fallback_models(model: str, data: dict, router: Any) -> list[str]:
     if router is not None:
         for attr in ("fallbacks", "context_window_fallbacks", "content_policy_fallbacks"):
             maps.extend(getattr(router, attr, None) or [])
+        # router_settings.default_fallbacks is a plain list that applies to every model group
+        dfb = getattr(router, "default_fallbacks", None)
+        if isinstance(dfb, list) and dfb:
+            maps.append({"*": [x for x in dfb if isinstance(x, str)]})
     body_fb = data.get("fallbacks")
     seen: list[str] = [model]
     queue = [model]
@@ -278,6 +293,14 @@ class BudgetGuard(CustomLogger):
         self._db_ok_at: float | None = None
         self._db_probe_task: Any = None
         self._ttl_pinned = False
+        self._ttl_pin_error: str | None = None
+        # Routes this hook cannot shape (/v1/messages, /v1/responses, embeddings, ...) still
+        # get a native reservation, with the native gaps. Default: a budgeted request on such
+        # a route is rejected (fail closed); "allow" opts back into native-only enforcement.
+        self.unguarded_routes = os.getenv("GOVPILOT_BUDGET_GUARD_UNGUARDED_ROUTES", "reject").lower()
+        # The TTL pin is what closes the counter-reseed gap; if it cannot be applied the
+        # internals changed, so budgeted requests are rejected unless explicitly allowed.
+        self.require_ttl_pin = os.getenv("GOVPILOT_BUDGET_GUARD_REQUIRE_TTL_PIN", "true").lower() == "true"
 
     async def _probe_db_once(self) -> None:
         import asyncio
@@ -330,22 +353,44 @@ class BudgetGuard(CustomLogger):
             import litellm
             from litellm.proxy.proxy_server import spend_counter_cache
             ttl = int(os.getenv("GOVPILOT_SPEND_COUNTER_TTL_SECONDS") or litellm.default_redis_ttl or 0)
-            rc = spend_counter_cache.redis_cache
-            if ttl > 0 and rc is not None:
+            rc = getattr(spend_counter_cache, "redis_cache", None)
+            if ttl <= 0:
+                self._ttl_pinned = True  # nothing configured: native TTL is the operator's choice
+                self._ttl_pin_error = None
+            elif rc is None or not hasattr(rc, "default_ttl"):
+                self._ttl_pin_error = "spend_counter_cache.redis_cache.default_ttl not found (LiteLLM internals changed?)"
+            else:
                 rc.default_ttl = ttl
                 self._ttl_pinned = True
-        except Exception:
+                self._ttl_pin_error = None
+        except Exception as e:
+            self._ttl_pin_error = f"{type(e).__name__}: {e}"
             log.exception("could not pin spend counter TTL")
 
     # ---------------------------------------------------------------- pre-call
     async def async_pre_call_hook(self, user_api_key_dict, cache, data: dict, call_type):
         self._pin_spend_counter_ttl()
-        if str(call_type) not in GUARDED_CALL_TYPES and str(call_type).split(".")[-1] not in GUARDED_CALL_TYPES:
+        reservation = getattr(user_api_key_dict, "budget_reservation", None)
+        budgeted = any(getattr(user_api_key_dict, a, None) for a in BUDGET_ATTRS) or reservation is not None
+        if budgeted and self.require_ttl_pin and not self._ttl_pinned:
+            self._event("budget.guard_self_check_failed", user_api_key_dict, data, check="spend_counter_ttl_pin",
+                        error=self._ttl_pin_error)
+            raise _reject(503, "budget_enforcement_unavailable",
+                          f"Budget guard self-check failed ({self._ttl_pin_error}); budgeted request rejected "
+                          "(fail closed). Set GOVPILOT_BUDGET_GUARD_REQUIRE_TTL_PIN=false to run native-only.")
+        ct = str(call_type).split(".")[-1]
+        if ct not in GUARDED_CALL_TYPES:
+            # A reservation exists only for priced LLM routes; those we cannot shape keep the
+            # native gaps (partial-reservation admission, no max_tokens ceiling).
+            if reservation is not None and budgeted and self.unguarded_routes != "allow":
+                self._event("budget.unguarded_route_rejected", user_api_key_dict, data, call_type=ct)
+                raise _reject(400, "route_not_budget_guarded",
+                              f"call_type={ct} is not covered by the budget guard; budgeted requests must use "
+                              "/v1/chat/completions (or set GOVPILOT_BUDGET_GUARD_UNGUARDED_ROUTES=allow).")
             return data
         model = data.get("model")
         if not isinstance(model, str):
             return data
-        budgeted = any(getattr(user_api_key_dict, a, None) for a in ("max_budget", "team_max_budget"))
         if budgeted and self.require_db and not await self._db_fresh():
             self._event("budget.db_unavailable_rejected", user_api_key_dict, data,
                         db_last_ok_age_s=None if self._db_ok_at is None else time.monotonic() - self._db_ok_at)
@@ -375,10 +420,16 @@ class BudgetGuard(CustomLogger):
         else:
             enforced, action = requested, "unchanged"
         if enforced is None:
-            return data  # unknown model limits and no policy: nothing to enforce against
+            if budgeted:
+                # No ceiling from policy, model_info or the request: the worst case is unbounded,
+                # so a budgeted request cannot be fitted to its reservation. Fail closed.
+                self._event("budget.no_ceiling_rejected", user_api_key_dict, data, candidates=candidates)
+                raise _reject(400, "max_tokens_ceiling_unknown",
+                              f"No max_tokens ceiling is known for {candidates}: send max_tokens, set "
+                              "model_info.max_output_tokens, or a token_policy for this agent.")
+            return data  # unbudgeted: nothing to enforce against
 
         # 2. fit worst-case cost inside the native reservation
-        reservation = getattr(user_api_key_dict, "budget_reservation", None)
         reserved = float(reservation["reserved_cost"]) if isinstance(reservation, dict) and \
             reservation.get("reserved_cost") is not None else None
         shapes = {}
