@@ -10,8 +10,8 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 |---|---|---|
 | Week 0 defaults | done | see PILOT-PLAN.md table |
 | T1 foundation | implemented (f4a15a1), in review | LiteLLM pinned v1.100.3; see docs/results/T1.md |
-| T2 budget | todo | |
-| T3 control plane | todo | |
+| T2 budget | in progress (Opus) | gap: no per-key max_tokens ceiling -> pre-call hook |
+| T3 control plane | in progress (Opus) | incl. OIDC stand-in + JWT->key auth layer |
 | T4 agents | todo | |
 | T5 guardrails | todo | |
 | T6 observability/discovery | todo | |
