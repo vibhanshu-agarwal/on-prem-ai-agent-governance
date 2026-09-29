@@ -31,6 +31,9 @@ DRILL_IMAGE = cpclient.AGENT_IMAGE            # govpilot/control-plane:1 carries
 PROBE_IMAGE = "govpilot/mock-provider:1"       # python + fastapi/uvicorn/httpx
 T8_LABEL = {"govpilot.t8test": "1"}
 RESULTS = ROOT / ".local" / "acceptance"
+# Git Bash, not C:\Windows\System32ash.exe (WSL), which subprocess would find first for a bare "bash"
+import shutil as _shutil
+BASH = os.environ.get("GIT_BASH") or _shutil.which("bash") or "bash"
 
 
 def uid(prefix="t8") -> str:
