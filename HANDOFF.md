@@ -18,7 +18,7 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 | T7 policy | done, review PASS (d105228), 58 tests | 52 tests; admission not yet wired to container start (T3/T8) |
 | T8 acceptance + integration | in progress (Opus) | |
 | T9 hardening/release | todo | |
-| T10 showcase packaging | status page UI in progress (Sonnet); README/demo after T8 | README, demo script |
+| T10 showcase packaging | status page done, review PASS (9305ae6, :8400, STATUS_DEMO_MODE); README/demo after T8 | README, demo script |
 
 ## Log
 - 2026-09-29: repo initialised, sources extracted, plan and agent defs written.
@@ -29,3 +29,4 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 - Integration debt for T8: tests/foundation shows 4 failures from concurrent T2/T4/T5/T6 containers; wire otel into real gateway per T6.md; recreate gov-gateway.
 - T5 review follow-ups: guardrail audit should use control-plane AuditSink port (T9); move mock-echo to test-only config (T9).
 - T4 review: control plane must be rebuilt to pick up capability rename; finding 8 (restart overshoot) test plan in T4.md -> T8.
+- Status page leftover: containers on internal networks can reach :8400 with spoofed Host (T9).
