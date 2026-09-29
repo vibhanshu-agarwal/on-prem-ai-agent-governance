@@ -5,5 +5,5 @@ budget: {max_usd: 1.0, duration: 30d}
 max_tokens_ceiling: 512
 capabilities: [calls_tools]
 required_sandbox_tier: container
-allowed_images: ["govpilot/hr-agent:*"]
+allowed_images: ["govpilot/hr-agent:*", "govpilot/agents:*"]   # T8: the three samples share the govpilot/agents image
 require_human_approval: [employee_record.update]

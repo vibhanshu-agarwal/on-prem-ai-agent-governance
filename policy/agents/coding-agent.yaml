@@ -5,5 +5,5 @@ budget: {max_usd: 5.0, duration: 30d}
 max_tokens_ceiling: 2048
 capabilities: [calls_tools, executes_model_code]
 required_sandbox_tier: microvm
-allowed_images: ["govpilot/coding-agent:*"]
+allowed_images: ["govpilot/coding-agent:*", "govpilot/agents:*"]   # T8: the three samples share the govpilot/agents image
 require_human_approval: [git.push, deploy.production]

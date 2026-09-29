@@ -5,5 +5,5 @@ budget: {max_usd: 2.0, duration: 30d}
 max_tokens_ceiling: 1024
 capabilities: [calls_tools, external_send]
 required_sandbox_tier: gvisor
-allowed_images: ["govpilot/finance-recon-agent:*"]
+allowed_images: ["govpilot/finance-recon-agent:*", "govpilot/agents:*"]   # T8: the three samples share the govpilot/agents image
 require_human_approval: [payment.release, ledger.write_off]

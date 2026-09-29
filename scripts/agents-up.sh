@@ -13,6 +13,8 @@ echo ">> syncing gateway keys (budget, models, token policy, attribution mode)"
 GATEWAY_URL="http://127.0.0.1:${GATEWAY_PORT:-4000}" "$PY" scripts/provision.py
 echo ">> syncing register + IdP client, writing .local/agents.env"
 "$PY" scripts/agents_provision.py
+echo ">> admission gate (T7 signed policy): every agent service must be admitted before it is created"
+"$PY" scripts/admit_agents.py --compose deploy/compose.agents.yml || { echo "admission DENIED: agents not started"; exit 1; }
 echo ">> building and starting agents"
 docker compose -f deploy/compose.agents.yml --env-file .local/agents.env up -d --build
 echo ">> agents:  docker logs -f gov-agent-hr | gov-agent-finance | gov-agent-coding"
