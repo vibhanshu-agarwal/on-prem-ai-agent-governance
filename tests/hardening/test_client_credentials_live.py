@@ -21,12 +21,12 @@ def gw(env):
     return f"http://127.0.0.1:{env.get('GATEWAY_PORT', '4000')}"
 
 
-def chat(gw, key, extra=None, model="mock-local"):
+def chat(gw, key, extra=None, model="mock-local", headers=None):
     body = {"model": model, "messages": [{"role": "user", "content": "hello"}], "max_tokens": 8, **(extra or {})}
     req = urllib.request.Request(
         gw + "/v1/chat/completions", data=json.dumps(body).encode(), method="POST",
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json",
-                 "x-govpilot-run-id": "run-" + uuid.uuid4().hex[:16]})
+                 "x-govpilot-run-id": "run-" + uuid.uuid4().hex[:16], **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, json.loads(r.read())
@@ -88,3 +88,10 @@ def test_ordinary_requests_are_unaffected(gw, agent_key):
     st, body = chat(gw, agent_key, {"user": "E1001", "metadata": {"trace": "x"}, "extra_body": {"foo": 1}, "temperature": 0.1})
     assert st == 200, (st, body)
     assert body["choices"][0]["message"]["content"]
+
+
+@pytest.mark.parametrize("disable", ["callbacks.client_credentials_guard.client_credentials_guard",
+                                     "client_credentials_guard", "ClientCredentialsGuard"])
+def test_a_client_cannot_switch_the_guard_off_with_litellms_disable_callbacks_header(gw, agent_key, disable):
+    st, body = chat(gw, agent_key, {"api_key": "sk-agent-own"}, headers={"x-litellm-disable-callbacks": disable})
+    assert st == 400 and body["error"]["type"] == "client_credentials_not_allowed", (st, body)
