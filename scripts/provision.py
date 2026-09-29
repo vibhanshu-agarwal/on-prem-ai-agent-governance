@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Create teams and one virtual key per pilot agent through the LiteLLM admin API.
 
-Stdlib only. Reads GATEWAY_URL and LITELLM_MASTER_KEY from env. Idempotent:
+Stdlib only. Reads GATEWAY_URL and LITELLM_MASTER_KEY from env, and teams/agents
+from deploy/agents.json (or $AGENTS_CONFIG). Idempotent:
 teams are reused by alias; an agent's key is reused if the stored key still
 validates, otherwise any old key with that alias is deleted and re-issued.
 Output: .local/agent-keys.json (gitignored).
@@ -17,21 +18,14 @@ URL = os.environ["GATEWAY_URL"].rstrip("/")
 MASTER = os.environ["LITELLM_MASTER_KEY"]
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".local", "agent-keys.json")
 
-# USD. Budgets are deliberately small so T2 can exhaust them with the mock providers.
-TEAMS = {
-    "hr": {"max_budget": 5.0},
-    "finance": {"max_budget": 10.0},
-    "engineering": {"max_budget": 20.0},
-}
-AGENTS = {
-    "hr-agent": {"team": "hr", "max_budget": 1.0,
-                 "models": ["mock-local"]},
-    "finance-recon-agent": {"team": "finance", "max_budget": 2.0,
-                            "models": ["mock-local", "mock-remote"]},
-    "coding-agent": {"team": "engineering", "max_budget": 5.0,
-                     "models": ["mock-local", "mock-remote", "mock-local-slow", "mock-remote-slow"]},
-}
-BUDGET_DURATION = "30d"
+# Teams, agents, budgets (USD) and model allowlists come from config, not code.
+# Budgets are deliberately small so T2 can exhaust them with the mock providers.
+CONFIG = os.environ.get("AGENTS_CONFIG") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "deploy", "agents.json")
+with open(CONFIG) as _f:
+    _cfg = json.load(_f)
+TEAMS = _cfg["teams"]
+AGENTS = _cfg["agents"]
+BUDGET_DURATION = _cfg.get("budget_duration", "30d")
 
 
 def call(method, path, body=None, key=MASTER, ok_statuses=(200,)):

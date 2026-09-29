@@ -134,25 +134,37 @@ def _container_ip(name, network):
     return sh("docker", "inspect", "-f", fmt, name).stdout.strip()
 
 
+def _connect_code(host, port):
+    # Prints CONNECTED on success, BLOCKED:<exc> on a network error, so a probe that fails for
+    # an unrelated reason (docker error, missing image/network) cannot pass as "blocked".
+    return ("import socket\n"
+            "try:\n"
+            f"    socket.create_connection(({host!r},{port}),timeout=3); print('CONNECTED')\n"
+            "except OSError as x:\n"
+            "    print('BLOCKED:' + type(x).__name__)\n")
+
+
+def _assert_blocked(r, what):
+    out = r.stdout.strip()
+    assert out.startswith("BLOCKED:"), f"{what}: expected a network error, got rc={r.returncode} {out!r} {r.stderr!r}"
+
+
 def test_agent_container_reaches_gateway_only():
     r = probe("import urllib.request as u;print(u.urlopen('http://gateway:4000/health/liveliness',timeout=5).status)")
     assert r.returncode == 0 and r.stdout.strip() == "200", r.stderr
     for host, port in [("mock-local", 8000), ("mock-remote", 8000), ("postgres", 5432), ("redis", 6379)]:
-        r = probe(f"import socket;socket.create_connection(('{host}',{port}),timeout=3);print('CONNECTED')")
-        assert "CONNECTED" not in r.stdout and r.returncode != 0, f"agents network must not reach {host}"
+        _assert_blocked(probe(_connect_code(host, port)), f"agents network must not reach {host}")
 
 
 def test_agent_container_cannot_reach_provider_ips_directly():
     for name in ["gov-mock-local", "gov-mock-remote"]:
         ip = _container_ip(name, "govpilot_providers")
         assert ip
-        r = probe(f"import socket;socket.create_connection(('{ip}',8000),timeout=3);print('CONNECTED')")
-        assert "CONNECTED" not in r.stdout and r.returncode != 0, f"{name} ({ip}) reachable from agents network"
+        _assert_blocked(probe(_connect_code(ip, 8000)), f"{name} ({ip}) reachable from agents network")
 
 
 def test_agent_container_has_no_internet():
-    r = probe("import socket;socket.create_connection(('1.1.1.1',443),timeout=3);print('CONNECTED')")
-    assert "CONNECTED" not in r.stdout and r.returncode != 0
+    _assert_blocked(probe(_connect_code("1.1.1.1", 443)), "agents network must have no internet")
 
 
 def test_only_gateway_on_agents_network():

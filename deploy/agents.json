@@ -1,0 +1,15 @@
+{
+  "_comment": "Environment-specific provisioning (teams, agents, budgets in USD, model allowlists). Read by scripts/provision.py; override path with AGENTS_CONFIG.",
+  "budget_duration": "30d",
+  "teams": {
+    "hr": {"max_budget": 5.0},
+    "finance": {"max_budget": 10.0},
+    "engineering": {"max_budget": 20.0}
+  },
+  "agents": {
+    "hr-agent": {"team": "hr", "max_budget": 1.0, "models": ["mock-local"]},
+    "finance-recon-agent": {"team": "finance", "max_budget": 2.0, "models": ["mock-local", "mock-remote"]},
+    "coding-agent": {"team": "engineering", "max_budget": 5.0,
+                     "models": ["mock-local", "mock-remote", "mock-local-slow", "mock-remote-slow"]}
+  }
+}
