@@ -52,19 +52,7 @@ model_list:
       max_output_tokens: 1024
       max_input_tokens: 8192
 
-  # ---- mock-echo: TEST FIXTURE for tests/guardrails (echoes the prompt, can emit tool calls).
-  # Served by tests/guardrails/stack/compose.echo.yml; unreachable (and unused) otherwise.
-  - model_name: mock-echo
-    litellm_params:
-      model: openai/mock-echo
-      api_base: http://mock-echo:8000/v1
-      api_key: os.environ/MOCK_LOCAL_API_KEY
-      input_cost_per_token: 0.000001
-      output_cost_per_token: 0.000002
-      max_tokens: 256
-    model_info:
-      max_output_tokens: 1024
-      max_input_tokens: 8192
+# (the guardrail tests' echo model is added by tests/guardrails/echo_config.py in a test-only config overlay)
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY        # from deploy/.env (generated, gitignored)

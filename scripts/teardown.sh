@@ -7,5 +7,5 @@ cd "$ROOT"
 ARGS=(down --remove-orphans)
 [[ "${1:-}" == "--volumes" || "${1:-}" == "--purge" ]] && ARGS+=(--volumes)
 ENVARG=(); [[ -f deploy/.env ]] && ENVARG=(--env-file deploy/.env)
-docker compose -f deploy/docker-compose.yml "${ENVARG[@]}" "${ARGS[@]}"
+docker compose -f deploy/docker-compose.yml -f deploy/hardening/compose.hardening.yml "${ENVARG[@]}" "${ARGS[@]}"
 if [[ "${1:-}" == "--purge" ]]; then rm -rf .local deploy/.env; echo "purged secrets"; fi

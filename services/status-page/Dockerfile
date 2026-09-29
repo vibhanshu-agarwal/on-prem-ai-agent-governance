@@ -1,6 +1,6 @@
 # Recruiter-facing agent status page: tiny FastAPI backend (holds IdP tokens server-side) + static UI.
 # It only talks HTTP to the control-plane API and the IdP token endpoint. No DB, no Docker socket.
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

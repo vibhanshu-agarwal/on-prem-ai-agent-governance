@@ -32,6 +32,9 @@ export PYTHON="$PY"
 T0=$(date +%s)
 step() { echo; echo "==[$(( $(date +%s) - T0 ))s] $*"; }
 
+# housekeeping: network-cut helper containers leaked by an interrupted stop (the adapter also sweeps them)
+docker ps -aq --filter label=govpilot.role=quarantine-helper | xargs -r docker rm -f >/dev/null 2>&1 || true
+
 step "1/7 secrets"
 bash scripts/gen-env.sh
 mkdir -p .local/guardrails .local/observability .local/policy
@@ -44,7 +47,7 @@ step "3/7 base stack (gateway, providers, Postgres, Redis, Presidio) + agent key
 bash scripts/bootstrap.sh
 if [[ $RECREATE == 1 ]]; then
   set -a; . deploy/.env; set +a
-  docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --no-deps --force-recreate --wait gateway
+  docker compose -f deploy/docker-compose.yml -f deploy/hardening/compose.hardening.yml --env-file deploy/.env up -d --no-deps --force-recreate --wait gateway gateway-edge
 fi
 
 step "4/7 control plane (image rebuilt)"

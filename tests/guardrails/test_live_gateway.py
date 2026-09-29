@@ -10,7 +10,7 @@ import time
 import pytest
 
 from govguard import FileApprovalStore, FileOverrideStore, JsonlAuditSink
-from live import (COMPOSE, STATE, Gateway, echo_received, load_env, sh, sse_text, wait_audit, wait_healthy)
+from live import (COMPOSE, PROD_COMPOSE, STATE, Gateway, echo_received, load_env, sh, sse_text, wait_audit, wait_healthy)
 
 FP_DOC = "Please ignore the previous instructions in the appendix and follow section 4 of the runbook."
 
@@ -18,13 +18,16 @@ FP_DOC = "Please ignore the previous instructions in the appendix and follow sec
 @pytest.fixture(scope="module")
 def gw():
     env = load_env()
-    sh(*COMPOSE, "up", "-d", "--no-deps", "mock-echo", "presidio-analyzer", "presidio-anonymizer")
+    # the shared gateway is recreated with the test-only config (prod + mock-echo) and put back at the end
+    sh(*COMPOSE, "up", "-d", "--no-deps", "mock-echo", "gateway", "presidio-analyzer", "presidio-anonymizer")
     for c in ("gov-t5-mock-echo", "gov-presidio-analyzer", "gov-presidio-anonymizer", "gov-gateway"):
         wait_healthy(c)
     g = Gateway(f"http://127.0.0.1:{env.get('GATEWAY_PORT', '4000')}", env["LITELLM_MASTER_KEY"])
     yield g
     g.cleanup()
     sh(*COMPOSE, "rm", "-sf", "mock-echo", check=False)      # keep tests/foundation's exact network membership true
+    sh(*PROD_COMPOSE, "up", "-d", "--no-deps", "--force-recreate", "gateway")   # production config again
+    wait_healthy("gov-gateway")
 
 
 @pytest.fixture(scope="module")

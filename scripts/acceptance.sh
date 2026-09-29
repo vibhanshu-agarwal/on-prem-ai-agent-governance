@@ -51,7 +51,7 @@ if [[ $ONLY_REPORT == 0 ]]; then
         # (seen once: a re-created anonymizer hung in gunicorn boot and stayed unhealthy; Docker does not restart
         # unhealthy containers, and every PII request then paid the 800 ms engine timeout -> retry with a restart)
         for attempt in 1 2 3; do
-          docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --no-deps --wait --wait-timeout 120 \
+          docker compose -f deploy/docker-compose.yml -f deploy/hardening/compose.hardening.yml --env-file deploy/.env up -d --no-deps --wait --wait-timeout 120 \
             presidio-analyzer presidio-anonymizer >/dev/null 2>&1 && break
           docker restart gov-presidio-analyzer gov-presidio-anonymizer >/dev/null 2>&1 || true
         done

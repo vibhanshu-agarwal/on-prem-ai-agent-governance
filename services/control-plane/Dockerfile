@@ -7,7 +7,7 @@
 # iproute2 + iptables are needed because this image is also the short-lived
 # "quarantine helper" that joins an agent's network namespace to reset its
 # established TCP connections (Docker stand-in for NetworkPolicy + conntrack flush).
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
 RUN apt-get update \
  && apt-get install -y --no-install-recommends iproute2 iptables \
  && rm -rf /var/lib/apt/lists/*

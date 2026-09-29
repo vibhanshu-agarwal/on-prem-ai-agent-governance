@@ -5,7 +5,7 @@
 # Paths relative to deploy/.
 services:
   gateway-guard-down:
-    image: ghcr.io/berriai/litellm:v1.100.3
+    image: ghcr.io/berriai/litellm:v1.100.3@sha256:a68b34df312f1e72914f0886384517fa4fdb09013480460b80a4e3a40104376b
     container_name: gov-t5-gateway-down
     restart: "no"
     command: ["--config", "/app/config.yaml", "--port", "4000"]
@@ -30,7 +30,7 @@ services:
       GOVGUARD_PRESIDIO_ANONYMIZER_URL: http://127.0.0.1:9
       GOVGUARD_STATE_DIR: /app/guardrails-state-down
     volumes:
-      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ../.local/guardrails-test/config.yaml:/app/config.yaml:ro   # prod config + mock-echo (tests/guardrails/echo_config.py)
       - ./litellm/callbacks:/app/callbacks:ro
       - ../services/guardrails/govguard:/opt/govguard/govguard:ro
       - ./guardrails:/app/guardrails:ro
@@ -46,7 +46,7 @@ services:
       start_period: 30s
 
   gateway-guard-off:
-    image: ghcr.io/berriai/litellm:v1.100.3
+    image: ghcr.io/berriai/litellm:v1.100.3@sha256:a68b34df312f1e72914f0886384517fa4fdb09013480460b80a4e3a40104376b
     container_name: gov-t5-gateway-off
     restart: "no"
     command: ["--config", "/app/config.yaml", "--port", "4000"]
@@ -69,7 +69,7 @@ services:
       LITELLM_TELEMETRY: "False"
       GOVGUARD_ENABLED: "false"      # hook disabled: the A/B baseline for latency measurements
     volumes:
-      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ../.local/guardrails-test/config.yaml:/app/config.yaml:ro   # prod config + mock-echo (tests/guardrails/echo_config.py)
       - ./litellm/callbacks:/app/callbacks:ro
       - ../services/guardrails/govguard:/opt/govguard/govguard:ro
       - ./guardrails:/app/guardrails:ro
@@ -84,7 +84,7 @@ services:
       start_period: 30s
 
   gateway-guard-on:
-    image: ghcr.io/berriai/litellm:v1.100.3
+    image: ghcr.io/berriai/litellm:v1.100.3@sha256:a68b34df312f1e72914f0886384517fa4fdb09013480460b80a4e3a40104376b
     container_name: gov-t5-gateway-on
     restart: "no"
     command: ["--config", "/app/config.yaml", "--port", "4000"]
@@ -107,7 +107,7 @@ services:
       LITELLM_TELEMETRY: "False"
       GOVGUARD_STATE_DIR: /app/guardrails-state-on
     volumes:
-      - ./litellm/config.yaml:/app/config.yaml:ro
+      - ../.local/guardrails-test/config.yaml:/app/config.yaml:ro   # prod config + mock-echo (tests/guardrails/echo_config.py)
       - ./litellm/callbacks:/app/callbacks:ro
       - ../services/guardrails/govguard:/opt/govguard/govguard:ro
       - ./guardrails:/app/guardrails:ro

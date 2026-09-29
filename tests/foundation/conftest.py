@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-CONTAINERS = ["gov-postgres", "gov-redis", "gov-mock-local", "gov-mock-remote", "gov-gateway"]
+CONTAINERS = ["gov-postgres", "gov-redis", "gov-mock-local", "gov-mock-remote", "gov-gateway", "gov-gateway-edge"]
 NON_GATEWAY = [c for c in CONTAINERS if c != "gov-gateway"]
 PROBE_IMAGE = "govpilot/mock-provider:1"   # has python; used as a stand-in agent container
 

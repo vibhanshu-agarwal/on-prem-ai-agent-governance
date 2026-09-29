@@ -6,6 +6,10 @@
 # Also publishes Presidio on 127.0.0.1 (via a dedicated bridge) so host-side tests/benchmarks can
 # talk to it; production keeps Presidio on the internal backend network only.
 services:
+  # the shared gateway serves the test-only echo model: production config + mock-echo (echo_config.py writes it)
+  gateway:
+    volumes:
+      - ../.local/guardrails-test/config.yaml:/app/config.yaml:ro
   presidio-analyzer:
     ports: ["127.0.0.1:5301:3000"]
     networks: [backend, t5host]

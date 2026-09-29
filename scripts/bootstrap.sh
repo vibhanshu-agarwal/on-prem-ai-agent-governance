@@ -13,7 +13,7 @@ docker network inspect govpilot_obs >/dev/null 2>&1 || docker network create gov
 mkdir -p .local/guardrails
 
 echo ">> docker compose up (build + wait for healthy)"
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build --wait --wait-timeout 300
+docker compose -f deploy/docker-compose.yml -f deploy/hardening/compose.hardening.yml --env-file deploy/.env up -d --build --wait --wait-timeout 300
 
 echo ">> provisioning teams and agent keys"
 mkdir -p .local

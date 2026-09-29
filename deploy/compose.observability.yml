@@ -16,9 +16,15 @@ name: govpilot-obs
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:24.4.1
+    image: clickhouse/clickhouse-server:24.4.1@sha256:2e6587b81a267c6152cf2112c3532516424d3eaa36f1b150d5b8847c0e3d5b01
     container_name: gov-obs-clickhouse
     restart: unless-stopped
+    # T9: the entrypoint chowns its data dir and drops to the clickhouse user, so it keeps those few capabilities
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL]
+    mem_limit: 3g
+    pids_limit: 2048
     environment:
       CLICKHOUSE_USER: ${OBS_CH_USER:-openlit}
       CLICKHOUSE_PASSWORD: ${OBS_CH_PASSWORD:?run scripts/observability-up.sh}
@@ -39,9 +45,13 @@ services:
       start_period: 60s
 
   openlit:
-    image: ghcr.io/openlit/openlit:2.1.0
+    image: ghcr.io/openlit/openlit:2.1.0@sha256:94552ccd09379b5e2fec3c51c4fec1b41d88d6b56b0a5ccc895c116673884fa8
     container_name: gov-obs-openlit
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]   # T9
+    cap_drop: [ALL]
+    mem_limit: 1g
+    pids_limit: 512
     environment:
       TELEMETRY_ENABLED: "false"
       INIT_DB_HOST: clickhouse
@@ -72,9 +82,13 @@ services:
       start_period: 40s
 
   grafana:
-    image: grafana/grafana-oss:11.6.1
+    image: grafana/grafana-oss:11.6.1@sha256:52c3e20686b860c6dc1f623811565773cf51eefa378817a4896dfc863c3c82c8
     container_name: gov-obs-grafana
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]   # T9
+    cap_drop: [ALL]
+    mem_limit: 768m
+    pids_limit: 256
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${OBS_GRAFANA_PASSWORD:?run scripts/observability-up.sh}
@@ -106,7 +120,7 @@ services:
   # ---- profile ebpf: OpenLIT Controller (see docs/results/T6.md for what happens on Docker Desktop) ----
   controller:
     profiles: [ebpf]
-    image: ghcr.io/openlit/openlit-controller:0.10.0
+    image: ghcr.io/openlit/openlit-controller:0.10.0@sha256:165efd4469ea2fd8916217b8eb67b9d7168f70d6596298928348b80a15eaf511
     container_name: gov-obs-controller
     restart: "no"
     pid: host

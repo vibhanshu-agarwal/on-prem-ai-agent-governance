@@ -62,7 +62,7 @@ services:
       - ../.local/t2/config.guarded.yaml:/app/config.yaml:ro
 
   gateway-native:
-    image: ghcr.io/berriai/litellm:v1.100.3
+    image: ghcr.io/berriai/litellm:v1.100.3@sha256:a68b34df312f1e72914f0886384517fa4fdb09013480460b80a4e3a40104376b
     container_name: t2-gateway-native
     restart: "no"
     command: ["--config", "/app/config.yaml", "--port", "4000"]

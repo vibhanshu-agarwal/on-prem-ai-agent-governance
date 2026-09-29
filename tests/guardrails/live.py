@@ -9,8 +9,12 @@ import httpx
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 STATE = ROOT / ".local" / "guardrails"
+PROD_COMPOSE = ["docker", "compose", "-p", "govpilot", "--env-file", str(ROOT / "deploy" / ".env"),
+                "-f", str(ROOT / "deploy" / "docker-compose.yml"),
+                "-f", str(ROOT / "deploy" / "hardening" / "compose.hardening.yml")]
 COMPOSE = ["docker", "compose", "-p", "govpilot", "--env-file", str(ROOT / "deploy" / ".env"),
            "-f", str(ROOT / "deploy" / "docker-compose.yml"),
+           "-f", str(ROOT / "deploy" / "hardening" / "compose.hardening.yml"),
            "-f", str(ROOT / "tests" / "guardrails" / "stack" / "compose.echo.yml"),
            "-f", str(ROOT / "tests" / "guardrails" / "stack" / "compose.down.yml")]
 

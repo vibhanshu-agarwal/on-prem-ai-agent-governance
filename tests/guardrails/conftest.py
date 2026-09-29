@@ -27,11 +27,15 @@ sys.path.insert(0, str(ROOT / "services" / "policy"))
 from govguard import (BuiltinEngine, CallContext, EngineUnavailable, FileApprovalStore,  # noqa: E402
                       FileOverrideStore, GuardrailConfig, GuardrailPipeline, MemoryAuditSink, Span)
 
+import echo_config  # noqa: E402
+
+echo_config.ensure()   # test-only gateway config (prod config + mock-echo) the stack overlays mount
 CONFIG_PATH = ROOT / "deploy" / "guardrails" / "guardrails.yaml"
 PRESIDIO_ANALYZER = "http://127.0.0.1:5301"
 PRESIDIO_ANONYMIZER = "http://127.0.0.1:5302"
 COMPOSE = ["docker", "compose", "-p", "govpilot", "--env-file", str(ROOT / "deploy" / ".env"),
            "-f", str(ROOT / "deploy" / "docker-compose.yml"),
+           "-f", str(ROOT / "deploy" / "hardening" / "compose.hardening.yml"),
            "-f", str(ROOT / "tests" / "guardrails" / "stack" / "compose.echo.yml")]
 
 

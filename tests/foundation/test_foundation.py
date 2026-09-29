@@ -174,14 +174,16 @@ def test_agent_container_has_no_internet():
     _assert_blocked(probe(_connect_code("1.1.1.1", 443)), "agents network must have no internet")
 
 
-def test_only_gateway_on_agents_network():
-    """The gateway is the only service on the agents network; every other member is a governed agent
-    workload (T4 sample agents carry the govpilot.agent_id label), never a provider, DB or cache."""
+def test_only_gateway_edge_on_agents_network():
+    """T9: the allowlisting proxy (gov-gateway-edge) is the only service on the agents network and the real
+    gateway is NOT on it; every other member is a governed agent workload (T4 sample agents carry the
+    govpilot.agent_id label), never a provider, DB or cache."""
     names = sh("docker", "network", "inspect", "govpilot_agents", "-f",
                "{{range .Containers}}{{.Name}} {{end}}").stdout.split()
-    assert "gov-gateway" in names
+    assert "gov-gateway-edge" in names
+    assert "gov-gateway" not in names, "the raw gateway must not be reachable from the agents network"
     for n in names:
-        if n == "gov-gateway":
+        if n == "gov-gateway-edge":
             continue
         label = sh("docker", "inspect", "-f", '{{index .Config.Labels "govpilot.agent_id"}}', n).stdout.strip()
         assert label and label != "<no value>", f"{n} is on govpilot_agents but is not a governed agent workload"

@@ -1,0 +1,133 @@
+# T9 hardening overlay for the base stack. Always used together with deploy/docker-compose.yml:
+#   docker compose -f deploy/docker-compose.yml -f deploy/hardening/compose.hardening.yml --env-file deploy/.env ...
+# scripts/bootstrap.sh and scripts/up.sh apply it. What it does:
+#
+#   1. Agents no longer reach the gateway. A new allowlisting reverse proxy (gateway-edge, nginx) takes the
+#      alias `gateway` on the agents network and forwards ONLY inference routes (deploy/hardening/nginx.conf).
+#      The real gateway leaves the agents network; it keeps the alias `gateway` on backend (control plane, estop
+#      and auth proxy call its admin API there) and is reachable from the proxy on the internal `gwfront`
+#      network as `gateway-core`. Admin routes are therefore reachable only from the backend network and the
+#      operator's 127.0.0.1:4000 port, never from agents.
+#   2. The gateway container: read-only root filesystem (tmpfs for scratch), non-root user, all capabilities
+#      dropped, no-new-privileges, pid/memory/cpu limits.
+#   3. Postgres, Redis, mock providers, Presidio: cap_drop ALL (+ the few they need to start), no-new-privileges,
+#      limits; read-only rootfs where the image tolerates it (see the per-service notes).
+#
+# Services keep working without this overlay (base file alone = unhardened, agents talk to the gateway directly);
+# tests/hardening/ asserts the hardened state of the running stack.
+x-secure: &secure
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+services:
+  gateway:
+    <<: *secure
+    read_only: true
+    # 65532 = "nonroot" convention; the image ships no dedicated account. Bind-mounted state
+    # (.local/guardrails) must be writable by this uid on a Linux host (see docs/runbook).
+    user: "65532:65532"
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /home/nonroot:size=64m,uid=65532,gid=65532,mode=700
+    environment:
+      HOME: /home/nonroot
+      XDG_CACHE_HOME: /tmp/.cache
+    pids_limit: 1024
+    mem_limit: 3g
+    cpus: 4
+    depends_on:
+      state-init: {condition: service_completed_successfully}
+    networks: !override
+      gwfront: {aliases: [gateway-core]}
+      providers: {}
+      backend: {}          # keeps the alias `gateway` here: control plane / estop / auth proxy admin path
+      edge: {}
+      obs: {}
+
+  # One-shot, as root with only CHOWN/DAC_OVERRIDE/FOWNER, exits immediately. Hands state written earlier by root
+  # processes to the unprivileged users that now own it: the guardrail state dir (audit log, overrides, approvals)
+  # to the gateway's uid, and the Redis volume to the `redis` user (redis-server used to run as root because the
+  # compose command is a shell wrapper that bypasses the image's privilege drop).
+  state-init:
+    image: redis:7.4.8-alpine@sha256:7aec734b2bb298a1d769fd8729f13b8514a41bf90fcdd1f38ec52267fbaa8ee6
+    container_name: gov-state-init
+    restart: "no"
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    entrypoint: ["sh", "-c", "chown -R 65532:65532 /state && chown -R redis:redis /redis-data"]
+    volumes:
+      - ../.local/guardrails:/state
+      - redisdata:/redis-data
+    network_mode: none
+
+  gateway-edge:
+    image: nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+    container_name: gov-gateway-edge
+    restart: unless-stopped
+    depends_on:
+      gateway: {condition: service_healthy}
+    <<: *secure
+    read_only: true
+    user: "101:101"
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 2
+    volumes:
+      - ./hardening/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      agents: {aliases: [gateway]}
+      gwfront: {}
+    labels:
+      govpilot.role: platform
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4000/health/liveliness"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  postgres:
+    <<: *secure
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]   # docker-entrypoint chowns the data dir, then drops to postgres
+    read_only: true
+    tmpfs: ["/tmp", "/run/postgresql"]
+    pids_limit: 256
+    mem_limit: 1g
+
+  redis:
+    <<: *secure
+    depends_on:
+      state-init: {condition: service_completed_successfully}
+    user: redis          # the command is a shell wrapper, so the image entrypoint would not drop from root; start unprivileged
+    read_only: true
+    tmpfs: ["/tmp"]
+    pids_limit: 128
+    mem_limit: 512m
+
+  mock-local: &mock
+    <<: *secure
+    read_only: true
+    tmpfs: ["/tmp"]
+    pids_limit: 128
+    mem_limit: 256m
+
+  mock-remote:
+    <<: *mock
+
+  presidio-analyzer:
+    <<: *secure
+    pids_limit: 256
+    mem_limit: 4g
+
+  presidio-anonymizer:
+    <<: *secure
+    pids_limit: 256
+    mem_limit: 1g
+
+networks:
+  gwfront:
+    name: govpilot_gwfront
+    internal: true

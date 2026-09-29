@@ -30,9 +30,13 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # T9: a dedicated internal network shared ONLY with the control plane and the IdP (they join it in
+    # compose.control-plane.yml), and a private bridge that exists only to publish 127.0.0.1:8400. The page is no
+    # longer on `cpinternal` / `control`, so no other platform container (auth proxy, delegation broker, discovery,
+    # estop...) can reach it, with a spoofed Host header or otherwise.
     networks:
-      cpinternal: {}
-      control: {}
+      statusnet: {}
+      statuspub: {}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u;u.urlopen('http://127.0.0.1:8400/api/health',timeout=3)"]
       interval: 10s
@@ -40,9 +44,8 @@ services:
       retries: 5
 
 networks:
-  cpinternal:
-    name: govpilot_cpinternal
-    external: true
-  control:
-    name: govpilot_control
-    external: true
+  statusnet:
+    name: govpilot_statusnet
+    external: true       # created by compose.control-plane.yml (internal)
+  statuspub:
+    name: govpilot_statuspub

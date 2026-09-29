@@ -12,8 +12,14 @@ import acclib as L
 
 pytestmark = pytest.mark.usefixtures("live")
 
+sys.path.insert(0, str(L.ROOT / "tests" / "guardrails"))
+import echo_config  # noqa: E402
+
+echo_config.ensure()        # the A/B gateways mount the test config (prod + mock-echo)
+
 COMPOSE = ["docker", "compose", "-p", "govpilot", "--env-file", str(L.ROOT / "deploy" / ".env"),
            "-f", str(L.ROOT / "deploy" / "docker-compose.yml"),
+           "-f", str(L.ROOT / "deploy" / "hardening" / "compose.hardening.yml"),
            "-f", str(L.ROOT / "tests" / "guardrails" / "stack" / "compose.down.yml")]
 
 

@@ -21,7 +21,7 @@ adapters:
   network_quarantine:
     type: docker
     governed_networks: [govpilot_agents, govpilot_agents_sso]   # networks agents use to reach governed services
-    chokepoints: [gov-gateway, gov-authproxy]     # where we confirm live connections are gone
+    chokepoints: [gov-gateway, gov-gateway-edge, gov-authproxy]     # where we confirm live connections are gone
     helper_image: govpilot/control-plane:1
     drain_timeout_s: 3
   identity_provider:

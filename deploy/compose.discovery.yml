@@ -14,6 +14,12 @@ services:
     build: ../services/discovery
     container_name: gov-discovery
     restart: unless-stopped
+    read_only: true                              # T9
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 256m
     environment:
       GOVDISC_CONFIG: /etc/govdisc/config.yaml
       IDP_CLIENT_SECRET_FEED_DOCKER_EVENTS: ${IDP_CLIENT_SECRET_FEED_DOCKER_EVENTS:?run scripts/discovery-up.sh}
