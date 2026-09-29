@@ -202,7 +202,7 @@ def main() -> int:
         commit += "+uncommitted-changes"     # a run on a dirty tree must say so
     # the commit the suites RAN at (acceptance.sh records it when a run starts); the report may be re-rendered later
     ran = (RES / "run-commit").read_text().strip() if (RES / "run-commit").exists() else ""
-    stamp = commit if not ran or ran == commit else f"{ran}` (report text re-rendered at `{commit}"
+    stamp = f"`{commit}`" if not ran or ran == commit else f"`{ran}` (report re-rendered at `{commit}`)"
     L = []
     w = L.append
     ids = S8 + [i for _, ids_, _ in JUL for i in ids_]
@@ -210,7 +210,7 @@ def main() -> int:
     w("# Acceptance results (T8)")
     w("")
     w(f"Generated {time.strftime('%Y-%m-%d %H:%M')} by `scripts/acceptance.sh` (renderer `scripts/acceptance_report.py`) "
-      f"at commit `{stamp}` on the full local stack (`scripts/up.sh`: LiteLLM v1.100.3 + T2 budget guard + T4 "
+      f"at commit {stamp} on the full local stack (`scripts/up.sh`: LiteLLM v1.100.3 + T2 budget guard + T4 "
       "attribution + T5 guardrails + OTel behind the T9 hardening overlay (allowlisting edge proxy, read-only non-root gateway), control plane, OpenLIT/ClickHouse/Grafana, discovery, three sample agents). "
       "Every number below was measured by the run; nothing is carried over from earlier task reports.")
     w("")
