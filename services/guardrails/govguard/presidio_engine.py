@@ -59,7 +59,7 @@ class PresidioEngine:
         self.windowed, self.window_pad = windowed, window_pad
         self.health_interval_s = health_interval_s
         self._health_task: asyncio.Task | None = None
-        self._health_ok = True
+        self._health_ok: bool | None = None     # None = never probed yet
         self.calls = 0                     # analyzer HTTP calls made (observability / tests)
 
     # ------------------------------------------------------------------ availability
@@ -74,21 +74,27 @@ class PresidioEngine:
         if t is None or t.done() or t.get_loop() is not loop:
             self._health_task = loop.create_task(self._health_loop())
 
+    async def _probe(self) -> None:
+        try:
+            r = await self._client.get(f"{self.analyzer_url}/health", timeout=min(self.timeout, 1.0))
+            self._health_ok = r.status_code == 200
+        except Exception:   # CancelledError is a BaseException: cancellation still propagates
+            self._health_ok = False
+
     async def _health_loop(self) -> None:
         while True:
-            try:
-                r = await self._client.get(f"{self.analyzer_url}/health", timeout=min(self.timeout, 1.0))
-                self._health_ok = r.status_code == 200
-            except Exception:   # CancelledError is a BaseException: cancellation still stops the loop
-                self._health_ok = False
             await asyncio.sleep(self.health_interval_s)
+            await self._probe()
 
-    def _check_alive(self) -> None:
-        self._ensure_health_task()
+    async def _check_alive(self) -> None:
         if time.monotonic() < self._down_until:  # circuit open: fail fast, no timeout per request
             raise EngineUnavailable("presidio analyzer circuit open")
-        if self.health_interval_s and not self._health_ok:
-            raise EngineUnavailable("presidio analyzer health probe failing")
+        if self.health_interval_s:
+            if self._health_ok is None:          # first use: know the engine's state before trusting a skipped call
+                await self._probe()
+            self._ensure_health_task()
+            if not self._health_ok:
+                raise EngineUnavailable("presidio analyzer health probe failing")
 
     # ------------------------------------------------------------------ analysis
     def _candidate_windows(self, text: str, entities: Sequence[str]) -> list[tuple[int, int]]:
@@ -104,7 +110,7 @@ class PresidioEngine:
 
     async def analyze(self, text: str, entities: Sequence[str], language: str = "en",
                       score_threshold: float = 0.5) -> list[Span]:
-        self._check_alive()
+        await self._check_alive()
         if self.windowed and entities and set(entities) <= PATTERN_ENTITIES:
             wins = self._candidate_windows(text, entities)
             if not wins:

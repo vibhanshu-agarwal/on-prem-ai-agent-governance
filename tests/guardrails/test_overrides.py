@@ -141,7 +141,5 @@ def test_override_snapshot_refreshes_off_the_request_path(tmp_path):
     assert reader.active_rules("a") == {}
     granter.grant("a", "injection", 600, "reason long enough", "alice")
     assert reader.active_rules("a") == {}                                       # stale snapshot served, no disk read
-    time.sleep(0.5)
-    reader.active_rules("a")                                                    # triggers the background refresh
-    time.sleep(0.3)
+    time.sleep(0.6)                                                             # the daemon refresher catches up
     assert "injection" in reader.active_rules("a")

@@ -182,22 +182,23 @@ class FileOverrideStore:
                 log.warning("unreadable override file %s ignored", p)  # unreadable = not granted
         return recs
 
-    def _refresh(self) -> None:
-        try:
-            self._cache = (time.monotonic(), self._read_dir())
-        finally:
-            self._refreshing = False
+    def _refresher(self) -> None:
+        while True:
+            time.sleep(self.cache_seconds)
+            try:
+                self._cache = (time.monotonic(), self._read_dir())
+            except Exception:  # never let the refresher die: a stale snapshot is bounded by the next success
+                log.exception("override refresh failed")
 
     def _all(self) -> list[dict]:
-        """cache_seconds == 0: read the directory every call (tests, CLI). Otherwise stale-while-revalidate:
-        the request path never touches the disk; a worker thread refreshes the snapshot at most every
-        cache_seconds (grants made by another process become visible within about that long)."""
-        now = time.monotonic()
+        """cache_seconds == 0: read the directory on every call (tests, CLI). Otherwise the request path never
+        touches the disk: it reads a snapshot that a daemon thread refreshes every cache_seconds, so a grant or
+        revoke made by another process (guardctl) takes effect within about cache_seconds."""
         if self.cache_seconds == 0 or self._cache is None:
-            self._cache = (now, self._read_dir())
-        elif now - self._cache[0] >= self.cache_seconds and not self._refreshing:
+            self._cache = (time.monotonic(), self._read_dir())
+        if self.cache_seconds and not self._refreshing:
             self._refreshing = True
-            threading.Thread(target=self._refresh, name="govguard-ovr", daemon=True).start()
+            threading.Thread(target=self._refresher, name="govguard-ovr", daemon=True).start()
         return self._cache[1]
 
     def list(self, agent_id: str | None = None, include_inactive: bool = False) -> list[dict]:

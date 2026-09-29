@@ -83,7 +83,6 @@ def echo_received(container="gov-t5-mock-echo") -> list:
 
 
 def audit_events(path=STATE / "audit.jsonl", since_ts: float = 0.0) -> list:
-    time.sleep(0.5)                       # the gateway's audit sink writes from a background thread (~50 ms batches)
     if not path.exists():
         return []
     out = []
@@ -95,3 +94,14 @@ def audit_events(path=STATE / "audit.jsonl", since_ts: float = 0.0) -> list:
         if e.get("ts", 0) >= since_ts:
             out.append(e)
     return out
+
+
+def wait_audit(predicate, since_ts: float = 0.0, path=STATE / "audit.jsonl", timeout: float = 15.0) -> list:
+    """Events matching `predicate`, polling: the gateway's audit sink writes from a background thread and the
+    bind-mounted file can lag by seconds on Docker Desktop (that lag is exactly why the hook never writes inline)."""
+    end = time.time() + timeout
+    while True:
+        hits = [e for e in audit_events(path, since_ts) if predicate(e)]
+        if hits or time.time() > end:
+            return hits
+        time.sleep(0.5)

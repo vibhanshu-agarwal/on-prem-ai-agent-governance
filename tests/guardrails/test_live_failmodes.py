@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from live import COMPOSE, ROOT, Gateway, audit_events, load_env, sh, wait_healthy
+from live import COMPOSE, ROOT, Gateway, load_env, sh, wait_audit, wait_healthy
 
 DOWN_STATE = ROOT / ".local" / "guardrails-down"
 
@@ -40,7 +40,7 @@ def test_restricted_and_confidential_fail_closed(down, keys, agent, classificati
     r = down.chat(keys[agent], "an ordinary prompt with nothing sensitive in it")
     assert r.status_code == 503 and code(r) == "guardrail_engine_unavailable", r.text
     assert "fail-closed" in r.json()["error"]["message"] and classification in r.json()["error"]["message"]
-    ev = [e for e in audit_events(DOWN_STATE / "audit.jsonl", t) if e["event"] == "engine.unavailable"]
+    ev = wait_audit(lambda e: e["event"] == "engine.unavailable", t, DOWN_STATE / "audit.jsonl")
     assert ev and ev[-1]["fail_mode"] == "closed" and ev[-1]["data_classification"] == classification
 
 
@@ -49,9 +49,8 @@ def test_internal_degrades_to_the_builtin_engine_and_still_masks(down, keys):
     r = down.chat(keys["coding"], "please email bob@example.com")
     assert r.status_code == 200, r.text
     assert "bob@example.com" not in r.text and "<EMAIL_ADDRESS>" in r.json()["choices"][0]["message"]["content"]
-    ev = audit_events(DOWN_STATE / "audit.jsonl", t)
-    assert any(e["event"] == "engine.unavailable" and e["fail_mode"] == "degrade" for e in ev)
-    assert any(e["event"] == "guardrail.request" and e["degraded"] is True for e in ev)
+    assert wait_audit(lambda e: e["event"] == "engine.unavailable" and e["fail_mode"] == "degrade", t, DOWN_STATE / "audit.jsonl")
+    assert wait_audit(lambda e: e["event"] == "guardrail.request" and e["degraded"] is True, t, DOWN_STATE / "audit.jsonl")
 
 
 def test_failing_closed_is_fast_not_a_timeout_per_request(down, keys):

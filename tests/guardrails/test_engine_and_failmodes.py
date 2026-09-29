@@ -187,3 +187,16 @@ def test_degraded_answers_are_not_cached_as_if_from_the_real_engine(make_harness
     eng.up = True
     d, _ = h.request(json.loads(json.dumps(msg)), agent="coding-agent")
     assert d["messages"][0]["content"] == "<EMAIL_ADDRESS> tail text"              # re-analysed, not served from cache
+
+
+def test_engine_down_at_first_use_is_known_before_a_clean_prompt_is_trusted():
+    def handler(req):
+        return httpx.Response(503) if req.url.path == "/health" else httpx.Response(200, json=[])
+
+    async def scenario():
+        e = PresidioEngine("http://a", "http://b", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+                           windowed=True, health_interval_s=5)
+        with pytest.raises(EngineUnavailable, match="health"):
+            await e.analyze("perfectly clean text, no candidates", ["EMAIL_ADDRESS"], "en", 0.5)
+        await e.aclose()
+    asyncio.run(scenario())
