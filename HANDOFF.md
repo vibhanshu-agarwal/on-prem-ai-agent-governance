@@ -17,8 +17,8 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 | T6 observability/discovery | done, review PASS (23c69f1), 61 tests incl cp discovery | 37 tests; Grafana :3400; eBPF works but OpenLIT OSS rejects controller; real gateway otel wiring pending (see T6.md) |
 | T7 policy | done, review PASS (d105228), 58 tests | 52 tests; admission not yet wired to container start (T3/T8) |
 | T8 acceptance + integration | done, Fable review PASS (840c9e6) | 28/28 acceptance; all suites green; see ACCEPTANCE.md; scripts/up.sh, acceptance.sh (~80 min) |
-| T9 hardening/release | done, review fixes df15f3e/89f7bc1; full run 27/28 (M-01 orphans from Presidio outage during suite) | edge allowlist proxy, read-only non-root gateway, SBOMs, notices, runbook |
-| T10 showcase packaging | status page done (9305ae6); M-01 fix + README/demo in progress (impl-sonnet) | README, demo script |
+| T9 hardening/release | done, review fixes df15f3e/89f7bc1; T10-session full clean-room run **28/28** (ca93af9) | edge allowlist proxy, read-only non-root gateway, SBOMs, notices, runbook; client credential guard |
+| T10 showcase packaging | done: status page, README, scripts/demo.sh, docs/assets/demo.gif, LICENSE (MIT) | M-01 fix (run journal), client credential guard, agents wake on rates change |
 
 ## Log
 - 2026-09-29: repo initialised, sources extracted, plan and agent defs written.
@@ -33,4 +33,7 @@ Rules: local git only, no push, no credentials, no paid providers, ask the user 
 - T8 open items: SBOM\/notices\/runbook (T9); in-window harm only for tools that check control plane; hard-killed gateway leaves reservations (safe side); leaked network-cut helper containers.
 - T8 review leftovers: register.py:176 rotate_secrets returns 200 on failed delete+block; reconcile.py:60 no post-check revert; stream-kill only checked on chunk arrival (stalled provider not cut).
 - 2026-09-30: custom agent types (impl-sonnet etc.) now loaded; use them for remaining work.
-- T9 review open: client api_key passthrough; discovery ignores self-chosen gov-* names/labels.
+- T9 review open: discovery ignores self-chosen gov-* names/labels. (client api_key passthrough: closed, see below.)
+- 2026-09-30 (T10 session): **M-01 fixed properly**: agents write the terminal state of every run to a durable journal (volume govpilot_agent_journal, agents/govagent/events.py JournalSink), scripts/run_journal.py accounts for every dangling parent run from it, M-01 has no tolerance by count; the T4 live tests' synthetic run trees now use throwaway identities and their containers journal too. **Client credential passthrough closed**: on LiteLLM v1.100.3 an agent's own api_key / extra_headers / headers reached the provider (and a wrong key put the shared deployment into cooldown for everyone); deploy/litellm/callbacks/client_credentials_guard.py refuses them (39 tests). Sleeping agents wake within 0.5 s when rates.json changes. README, scripts/demo.sh (+ demo_helper.py), scripts/record_demo_gif.py, docs/assets, LICENSE. Full clean-room run (`acceptance.sh --fresh`, 60 min): 28/28, suites 615 tests all green; details in docs/results/ACCEPTANCE.md.
+- Gotchas learned: a full run exhausts the finance agent's $2 budget after ~2 runs on one stack (use `acceptance.sh --fresh`); discovery feeds cap proposals per day (demo.sh resets the counter with an audited admin call when needed); a rejected discovery proposal never re-appears for the same name (demo.sh uses a fresh container name); `agents_ctl.py` re-formats deploy/agents/config/rates.json (demo.sh restores it byte for byte).
+- Open, small: the gateway-logs feed proposes a registered agent by IP (`caller-172.x`, seen for hr-agent); the demo GIF frames come from headless Chrome (the browser-pane tool saves only 800 px images).
