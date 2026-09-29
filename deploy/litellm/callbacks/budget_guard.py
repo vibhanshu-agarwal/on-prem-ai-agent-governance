@@ -21,6 +21,13 @@ enforced ceiling; the stream ends with finish_reason "length", the upstream is
 closed, the partial output is billed (reservation reconciled) and an auditable
 `budget.stream_terminated` event is emitted.
 
+In-flight kill (T8): while a stream is running, the guard re-checks the caller's virtual key every
+GOVPILOT_STREAM_KILL_CHECK_SECONDS (default 1.0; 0 disables). If the key was blocked or deleted (the control
+plane's stop/quarantine blocks keys first), the upstream is closed and the partial output billed at once
+(`budget.stream_terminated`, reason key_revoked). This matters for streams the client cannot see being cut:
+T5's guardrails buffer streamed output, so no byte reaches the agent until the end and a network-level cut
+alone would let the provider generate up to max_tokens.
+
 Fail closed on Postgres loss: a background `SELECT 1` probe; budgeted requests are
 rejected (503) once the spend DB has not answered for GOVPILOT_BUDGET_GUARD_DB_STALE_SECONDS
 (native LiteLLM keeps admitting cached keys for ~60 s with the DB down).
@@ -472,16 +479,42 @@ class BudgetGuard(CustomLogger):
         return data
 
     # ---------------------------------------------------------------- streaming
+    async def _key_revoked(self, token_hash: str) -> bool:
+        """True if the key was blocked or deleted since the request was admitted (DB is the source of truth:
+        /key/block writes it and only invalidates the in-memory auth cache). A DB error never cuts a stream."""
+        try:
+            from litellm.proxy.proxy_server import prisma_client
+            if prisma_client is None:
+                return False
+            import asyncio
+            rec = await asyncio.wait_for(prisma_client.db.litellm_verificationtoken.find_unique(
+                where={"token": token_hash}), timeout=2.0)
+            return rec is None or bool(getattr(rec, "blocked", False))
+        except Exception:
+            log.debug("in-flight key check failed", exc_info=True)
+            return False
+
     async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data: dict):
         limit = _requested_tokens(request_data)
-        if limit is None:
-            async for chunk in response:
-                yield chunk
-            return
-        limit *= _multiplier(request_data)
+        if limit is not None:
+            limit *= _multiplier(request_data)
+        every = float(os.environ.get("GOVPILOT_STREAM_KILL_CHECK_SECONDS", "1.0"))
+        token_hash = getattr(user_api_key_dict, "token", None) if every > 0 else None
+        next_check = time.monotonic() + every
         seen = 0
         last = None
         async for chunk in response:
+            if token_hash and time.monotonic() >= next_check:
+                next_check = time.monotonic() + every
+                if await self._key_revoked(token_hash):
+                    await self._terminate_stream(user_api_key_dict, response, request_data, seen, limit,
+                                                 reason="key_revoked: the agent's key was blocked or deleted "
+                                                        "mid-stream (stop/quarantine); upstream closed")
+                    return
+            if limit is None:
+                last = chunk
+                yield chunk
+                continue
             n = 0
             try:
                 for ch in getattr(chunk, "choices", None) or []:
@@ -510,7 +543,8 @@ class BudgetGuard(CustomLogger):
         except Exception:
             return template
 
-    async def _terminate_stream(self, user_api_key_dict, response, request_data, seen, limit):
+    async def _terminate_stream(self, user_api_key_dict, response, request_data, seen, limit,
+                                reason="provider exceeded enforced max_tokens; stream cut at the reservation boundary"):
         reservation = getattr(user_api_key_dict, "budget_reservation", None)
         # Close the upstream first so the provider stops generating, then bill what was
         # actually produced (this reconciles the reservation and writes the spend log).
@@ -535,8 +569,7 @@ class BudgetGuard(CustomLogger):
         self._event("budget.stream_terminated", user_api_key_dict, request_data,
                     delivered_output_chunks=seen, enforced_max_tokens=limit,
                     reserved_cost=(reservation or {}).get("reserved_cost") if isinstance(reservation, dict) else None,
-                    partial_billed=billed,
-                    reason="provider exceeded enforced max_tokens; stream cut at the reservation boundary")
+                    partial_billed=billed, reason=reason)
 
     # ---------------------------------------------------------------- non-streaming audit
     async def async_post_call_success_hook(self, data: dict, user_api_key_dict, response):
