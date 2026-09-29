@@ -14,7 +14,8 @@ MESSAGES = [{"role": "user", "content": "one two three four"}]  # 4 words + 3 ov
 
 
 def auth(key):
-    return {"Authorization": f"Bearer {key}"}
+    # T4: the agent keys enforce a run id (attribution.mode=enforce); a fixed one is enough for these checks
+    return {"Authorization": f"Bearer {key}", "x-govpilot-run-id": "run-foundation-tests"}
 
 
 # ---------------------------------------------------------------- health

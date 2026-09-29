@@ -1,0 +1,7 @@
+{
+  "_comment": "Loop rates for the sample agents. Re-read by every running agent whenever this file changes (no restart). Edit by hand or use: python scripts/agents_ctl.py rogue|calm|pause|resume <agent>. Keys: interval_s, jitter, concurrency, max_tokens, on_budget_exceeded (backoff|hammer), paused, profile.",
+  "default": {"interval_s": 10, "jitter": 0.2, "concurrency": 1, "on_budget_exceeded": "backoff"},
+  "hr-agent": {"interval_s": 8},
+  "finance-recon-agent": {"interval_s": 12},
+  "coding-agent": {"interval_s": 15}
+}

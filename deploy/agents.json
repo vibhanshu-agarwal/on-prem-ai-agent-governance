@@ -1,5 +1,5 @@
 {
-  "_comment": "Environment-specific provisioning (teams, agents, budgets in USD, model allowlists). Read by scripts/provision.py; override path with AGENTS_CONFIG.",
+  "_comment": "Environment-specific provisioning (teams, agents, budgets in USD, model allowlists). Read by scripts/provision.py (gateway keys) and scripts/agents_provision.py (control-plane register + IdP); override path with AGENTS_CONFIG. 'metadata' is written to the agent's gateway key: token_policy is read by budget_guard (T2), attribution by run_attribution (T4). 'capabilities'/'sandbox_tier'/'auth'/'oidc_subject' describe the identity in the register; 'delegation' is the attenuated scope the agent asks for when it delegates.",
   "budget_duration": "30d",
   "teams": {
     "hr": {"max_budget": 5.0},
@@ -7,9 +7,32 @@
     "engineering": {"max_budget": 20.0}
   },
   "agents": {
-    "hr-agent": {"team": "hr", "max_budget": 1.0, "models": ["mock-local"]},
-    "finance-recon-agent": {"team": "finance", "max_budget": 2.0, "models": ["mock-local", "mock-remote"]},
-    "coding-agent": {"team": "engineering", "max_budget": 5.0,
-                     "models": ["mock-local", "mock-remote", "mock-local-slow", "mock-remote-slow"]}
+    "hr-agent": {
+      "team": "hr", "max_budget": 1.0, "models": ["mock-local"],
+      "capabilities": ["calls_tools"], "sandbox_tier": "container", "auth": "key",
+      "metadata": {
+        "token_policy": {"max_tokens_ceiling": 512, "default_max_tokens": 128, "on_exceed": "reject", "on_insufficient_reservation": "reject"},
+        "attribution": {"mode": "enforce"}
+      }
+    },
+    "finance-recon-agent": {
+      "team": "finance", "max_budget": 2.0, "models": ["mock-local", "mock-remote"],
+      "capabilities": ["calls_tools"], "sandbox_tier": "gvisor", "auth": "oidc",
+      "oidc_subject": "finance-recon-agent",
+      "delegation": {"budget_usd": 0.2, "models": ["mock-local"], "ttl_s": 3600},
+      "metadata": {
+        "token_policy": {"max_tokens_ceiling": 1024, "default_max_tokens": 64, "on_exceed": "reject", "on_insufficient_reservation": "reject"},
+        "attribution": {"mode": "enforce"}
+      }
+    },
+    "coding-agent": {
+      "team": "engineering", "max_budget": 5.0,
+      "models": ["mock-local", "mock-remote", "mock-local-slow", "mock-remote-slow"],
+      "capabilities": ["calls_tools", "executes_model_code"], "sandbox_tier": "microvm", "auth": "key",
+      "metadata": {
+        "token_policy": {"max_tokens_ceiling": 2048, "default_max_tokens": 96, "on_exceed": "reject", "on_insufficient_reservation": "reject"},
+        "attribution": {"mode": "enforce"}
+      }
+    }
   }
 }

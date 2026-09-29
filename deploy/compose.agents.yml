@@ -1,0 +1,131 @@
+# T4 sample agents (HR, Finance Reconciliation, Coding) + the delegation broker.
+# Standalone file (its own compose project); it only joins networks that already exist:
+#   scripts/agents-up.sh   provisions keys / identities, writes .local/agents.env, then runs
+#   docker compose -f deploy/compose.agents.yml --env-file .local/agents.env up -d --build
+#
+# Identity routes (both are demonstrated):
+#   hr-agent, coding-agent   LiteLLM virtual key  -> gateway:4000        (network govpilot_agents)
+#   finance-recon-agent      OIDC JWT from the IdP -> auth proxy         (network govpilot_agents_sso)
+#                            + a delegation token for sub-agents, minted through the broker
+#
+# Labels match the control-plane register (govpilot.agent_id / .team / .root_agent_id) so stop,
+# quarantine and estop find these containers. Every agent runs read-only, non-root, no
+# capabilities: the Docker stand-in for the sandbox tier (the coding agent's declared tier is microvm;
+# a real deployment would run it in one, this is a labelled simplification).
+#
+# Loop rates come from deploy/agents/config/rates.json (a directory mount, so edits are seen live).
+name: govpilot-agents
+
+x-agent: &agent
+  image: govpilot/agents:1
+  build: ../agents
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 128
+  mem_limit: 256m
+  volumes:
+    - ./agents/config:/etc/agents:ro
+  environment: &agent-env
+    AGENT_RATES_FILE: /etc/agents/rates.json
+    AGENT_INTERVAL_S: ${AGENT_INTERVAL_S:-10}
+    AGENT_MAX_ITERATIONS: ${AGENT_MAX_ITERATIONS:-}
+
+services:
+  hr-agent:
+    <<: *agent
+    container_name: gov-agent-hr
+    command: ["python", "-m", "samples.hr_agent"]
+    environment:
+      <<: *agent-env
+      AGENT_ID: hr-agent
+      AUTH_MODE: key
+      AGENT_KEY: ${HR_AGENT_KEY:?run scripts/agents-up.sh}
+      GATEWAY_URL: http://gateway:4000
+    labels:
+      govpilot.agent_id: hr-agent
+      govpilot.team: hr
+      govpilot.root_agent_id: hr-agent
+      govpilot.sandbox_tier: container
+      govpilot.capabilities: calls_tools
+      govpilot.auth: key
+    networks: [agents]
+
+  finance-recon-agent:
+    <<: *agent
+    container_name: gov-agent-finance
+    command: ["python", "-m", "samples.finance_agent"]
+    depends_on: [delegation-broker]
+    environment:
+      <<: *agent-env
+      AGENT_ID: finance-recon-agent
+      AUTH_MODE: oidc
+      GATEWAY_URL: http://sso-gateway:8080
+      IDP_TOKEN_URL: http://idp:8300/token
+      CLIENT_ID: ${FINANCE_CLIENT_ID:?run scripts/agents-up.sh}
+      CLIENT_SECRET: ${FINANCE_CLIENT_SECRET:?run scripts/agents-up.sh}
+      DELEGATION_TOKEN: ${FINANCE_DELEGATION_TOKEN:?run scripts/agents-up.sh}
+      BROKER_URL: http://delegation-broker:8090
+    labels:
+      govpilot.agent_id: finance-recon-agent
+      govpilot.team: finance
+      govpilot.root_agent_id: finance-recon-agent
+      govpilot.sandbox_tier: gvisor
+      govpilot.capabilities: calls_tools
+      govpilot.auth: oidc
+    networks: [agents_sso]
+
+  coding-agent:
+    <<: *agent
+    container_name: gov-agent-coding
+    command: ["python", "-m", "samples.coding_agent"]
+    environment:
+      <<: *agent-env
+      AGENT_ID: coding-agent
+      AUTH_MODE: key
+      AGENT_KEY: ${CODING_AGENT_KEY:?run scripts/agents-up.sh}
+      GATEWAY_URL: http://gateway:4000
+    labels:
+      govpilot.agent_id: coding-agent
+      govpilot.team: engineering
+      govpilot.root_agent_id: coding-agent
+      govpilot.sandbox_tier: microvm
+      govpilot.capabilities: calls_tools,executes_model_code
+      govpilot.auth: key
+    networks: [agents]
+
+  # Not an agent: a forwarder for the single control-plane call an agent may make (mint a child credential).
+  delegation-broker:
+    image: govpilot/agents:1
+    build: ../agents
+    container_name: gov-delegation-broker
+    restart: unless-stopped
+    command: ["python", "-m", "govagent.broker"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      CONTROL_PLANE_URL: http://control-plane:8100
+    labels:
+      govpilot.role: platform
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8090/healthz',timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks:
+      agents_sso: {aliases: [delegation-broker]}
+      cpinternal: {}
+
+networks:
+  agents:
+    name: govpilot_agents
+    external: true
+  agents_sso:
+    name: govpilot_agents_sso
+    external: true
+  cpinternal:
+    name: govpilot_cpinternal
+    external: true

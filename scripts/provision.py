@@ -89,7 +89,14 @@ def main():
         prev = existing.get("agents", {}).get(agent)
         if prev and key_valid(prev["key"]):
             result["agents"][agent] = prev
-            print(f"  reuse key for {agent}")
+            # T4: bring an existing key in line with the config (budget, models, per-agent policy metadata)
+            st, upd = call("POST", "/key/update", {
+                "key": prev["key"], "models": spec["models"], "max_budget": spec["max_budget"],
+                "metadata": {"agent_id": agent, "team": spec["team"], **(spec.get("metadata") or {})}})
+            if st != 200:
+                sys.exit(f"key/update {agent} failed: {st} {upd}")
+            result["agents"][agent].update(max_budget=spec["max_budget"], models=spec["models"])
+            print(f"  reuse key for {agent} (synced budget/models/metadata)")
             continue
         st, found = call("GET", f"/key/list?key_alias={agent}")
         if st == 200 and found.get("keys"):
@@ -100,7 +107,7 @@ def main():
             "models": spec["models"],
             "max_budget": spec["max_budget"],
             "budget_duration": BUDGET_DURATION,
-            "metadata": {"agent_id": agent, "team": spec["team"]},
+            "metadata": {"agent_id": agent, "team": spec["team"], **(spec.get("metadata") or {})},
         })
         if st != 200:
             sys.exit(f"key/generate {agent} failed: {st} {data}")
