@@ -80,7 +80,7 @@ class PolicyStore:
     # ---- read ----
     def get(self, version: str) -> Bundle:
         """Load one stored bundle, verifying its signature. Raises PolicyLoadError."""
-        if not _VERSION_RE.match(version or ""):
+        if not isinstance(version, str) or not _VERSION_RE.fullmatch(version):
             raise PolicyLoadError(f"invalid version {version!r}")
         path = self.bundles / f"{version}.bundle.json"
         try:

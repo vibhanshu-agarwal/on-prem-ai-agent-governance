@@ -201,6 +201,31 @@ def test_version_path_traversal_rejected(active_store):
         active_store.get("../../etc/passwd")
 
 
+@pytest.mark.parametrize("bad", ["v1-abcdef012345\n", 5, None, ["v1-abcdef012345"]])
+def test_bad_version_values_fail_closed(active_store, bad):
+    with pytest.raises(PolicyLoadError):
+        active_store.get(bad)
+    active_store.active_path.write_text(json.dumps({"version": bad}))
+    with pytest.raises(PolicyLoadError):
+        active_store.load_active()
+
+
+def test_signature_checked_before_payload_is_parsed(keys):
+    """An unverifiable payload must fail on the signature, never reach the JSON/schema parser."""
+    signer, trust = keys
+    forged = {"alg": "ed25519", "key_id": signer.key_id, "value": "AAAA"}
+    for payload in ["not json at all", '{"manifest":{},"policy":{}}']:
+        doc = {"format": "govpolicy-bundle/1", "payload": payload, "signature": forged}
+        with pytest.raises(BundleError, match="signature verification failed"):
+            verify_bundle(json.dumps(doc), Ed25519Verifier.from_trust_dir(trust))
+
+
+def test_unencodable_payload_is_bundle_error(keys):
+    raw = '{"format":"govpolicy-bundle/1","payload":"\\ud800","signature":{"alg":"ed25519","key_id":"x","value":"AA=="}}'
+    with pytest.raises(BundleError, match="malformed"):
+        verify_bundle(raw, Ed25519Verifier.from_trust_dir(keys[1]))
+
+
 def test_publish_is_idempotent_for_same_content(active_store, policy_dir, keys):
     again = active_store.publish(policy_dir, keys[0])
     assert again.version == active_store.active_version()

@@ -91,10 +91,11 @@ def verify_bundle(raw: Union[str, bytes], verifier: Verifier) -> Bundle:
         if not isinstance(payload, str) or "signature" not in outer or outer["signature"] is None:
             raise BundleError("bundle is unsigned or malformed")
         sig = Signature.from_dict(outer["signature"])
+        signed_bytes = payload.encode("utf-8")  # lone surrogates -> UnicodeEncodeError (ValueError)
     except (ValueError, KeyError, TypeError, AttributeError, SignatureError) as e:
         raise BundleError(f"malformed bundle: {e}") from e
     try:
-        verifier.verify(payload.encode("utf-8"), sig)
+        verifier.verify(signed_bytes, sig)
     except SignatureError as e:
         raise BundleError(f"signature verification failed: {e}") from e
     try:
